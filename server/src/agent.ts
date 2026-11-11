@@ -11,7 +11,7 @@ import type { Sites } from "./sites.ts";
 import { registrable, hostOf } from "./sites.ts";
 import type { Grants } from "./grants.ts";
 import type { Tickets, Ticket } from "./tickets.ts";
-import { Activity, ReadTextIndex, extractValues, shapesOf } from "./activity.ts";
+import { Activity, ReadTextIndex, extractValues, shapesOf, valueType, entropyBand } from "./activity.ts";
 import type { Keys } from "./crypto.ts";
 import { sha256 } from "./crypto.ts";
 import type { Notifier } from "./notify.ts";
@@ -32,6 +32,7 @@ export interface Services {
   adblock?: AdBlocker;
   /** Wait after a click for held requests or a navigation. */
   settleMs: number;
+  appOrigin?: string;
 }
 
 const SENSITIVE_PATH = /\/(message|messages|chat|inbox|settings|billing|account\/(billing|payment)|payments?|wallet|subscriptions?)(\/|$|\?)/i;
@@ -152,11 +153,32 @@ export class AgentSession {
     return t;
   }
 
+  /** Popups adopted during takeover (sign-in windows). */
+  readonly popups = new Set<Tab>();
+
+  allTabs(): Tab[] {
+    return [...Object.values(this.tabs).filter((t): t is Tab => !!t), ...this.popups];
+  }
+
   /** For takeover: the tab for a profile, opened at a URL if it doesn't exist yet. */
-  async takeoverTab(profile: Profile, url: string): Promise<Tab> {
+  async takeoverTab(profile: Profile, url: string, onCurrent?: (tab: Tab) => void): Promise<Tab> {
     const existing = this.tabs[profile];
     const tab = existing ?? (await this.ensureTab(profile));
     this.takeoverTabs.add(tab.id);
+    // A "Sign in with…" window opened during takeover joins it; when it closes, control returns to the tab.
+    tab.allowPopups(true);
+    const offPopup = tab.onPopup((popup) => {
+      this.popups.add(popup);
+      this.takeoverTabs.add(popup.id);
+      void popup.emulate("mobile").catch(() => {});
+      onCurrent?.(popup);
+      popup.onClose(() => {
+        this.popups.delete(popup);
+        this.takeoverTabs.delete(popup.id);
+        onCurrent?.(tab);
+      });
+    });
+    this.takeoverCleanup.set(tab.id, offPopup);
     const cur = await tab.currentUrl().catch(() => "");
     if (!existing || cur === "about:blank" || profile !== this.active) {
       await tab.emulate("mobile");
@@ -165,8 +187,18 @@ export class AgentSession {
     return tab;
   }
 
+  private readonly takeoverCleanup = new Map<string, () => void>();
+
   async endTakeover(tab: Tab): Promise<void> {
     this.takeoverTabs.delete(tab.id);
+    tab.allowPopups(false);
+    this.takeoverCleanup.get(tab.id)?.();
+    this.takeoverCleanup.delete(tab.id);
+    for (const p of this.popups) {
+      this.takeoverTabs.delete(p.id);
+      await p.close().catch(() => {});
+    }
+    this.popups.clear();
     const site = this.s.sites.resolve(this.userId, await tab.currentUrl().catch(() => ""));
     await tab.emulate(site.device).catch(() => {});
   }
@@ -221,12 +253,31 @@ export class AgentSession {
     if (this.s.adblock && pageSite.adblock && !(r.resourceType === "Document" && r.sessionId === r.rootSessionId)) {
       if (this.s.adblock.shouldBlock(r, pageDomain ? `https://${pageDomain}/` : r.url)) return { verdict: "deny", rule: "blocked_ad" };
     }
+    if (this.takeoverTabs.has(tab.id)) {
+      // A person driving the tab may use sites blocked for agents by default (sign-in providers are for
+      // humans only), but never LAN or private addresses, this app, or a site blocked on purpose.
+      if (site.level === "blocked" && !(site.source === "default" && site.matched && !["private", "lan"].includes(site.matched) && site.matched !== hostOf(this.s.appOrigin ?? ""))) {
+        return { verdict: "deny", rule: `site_blocked:${site.matched ?? domain}` };
+      }
+      return { verdict: "allow", rule: "human_takeover" };
+    }
     if (site.level === "blocked") return { verdict: "deny", rule: `site_blocked:${site.matched ?? domain}` };
-    if (this.takeoverTabs.has(tab.id)) return { verdict: "allow", rule: "human_takeover" };
     const isTopNav = r.resourceType === "Document" && r.sessionId === r.rootSessionId && r.frameId === tab.mainFrameId;
 
     if (r.method === "GET" || r.method === "HEAD") {
-      if (!isTopNav) return { verdict: "allow", rule: "subresource_read" };
+      if (!isTopNav) {
+        // After a signed-in read, a subresource (image, script, beacon-by-GET) to a domain the session hadn't
+        // used before can't be held without breaking pages, but it can't be allowed to carry what was read:
+        // refuse it when a value overlaps signed-in text or has a smuggling shape (Access Model real-time checks).
+        if (this.tainted && !this.usedBeforeTaint.has(domain) && domain !== registrable(pageDomain ?? "")) {
+          const why = this.smuggling(r.url);
+          if (why) {
+            this.flag(domain, `a page request carried ${why} after a signed-in read`, "gate_shape");
+            return { verdict: "deny", rule: `taint_subresource:${why}` };
+          }
+        }
+        return { verdict: "allow", rule: "subresource_read" };
+      }
       if (tab.profile === "personal" && LEVEL_RANK[site.level] < LEVEL_RANK.read_as_you) return { verdict: "deny", rule: "profile_mismatch" };
       if (this.tainted && !this.usedBeforeTaint.has(domain) && carriesData(r.url)) {
         if (this.useGrant(domain, "taint_exit", this.requestHash(r, null))) return { verdict: "allow", rule: "grant:taint_exit" };
@@ -249,6 +300,18 @@ export class AgentSession {
     if (this.token.kind === "read" && cls !== "taint_exit") return { verdict: "deny", rule: "read_token_cannot_act" };
     if (this.useGrant(domain, cls, this.requestHash(r, op))) return { verdict: "allow", rule: `grant:${cls}` };
     return { verdict: "hold", rule: cls };
+  }
+
+  /** Overlap with signed-in text, or a long high-entropy encoded value: what exfiltration looks like. */
+  smuggling(url: string, body?: string): string | null {
+    for (const v of extractValues(url, body)) {
+      if (this.readIndex.overlap(v.value) >= 24) return "text read while signed in";
+      // A blob dressed up as a file name (…/aGVsbG8….png) is still a blob.
+      const bare = v.where === "path" ? v.value.replace(/\.[a-z0-9]{1,5}$/i, "") : v.value;
+      const t = valueType(bare);
+      if (bare.length >= 48 && (t === "base64" || t === "hex") && entropyBand(bare) !== "low") return `a long ${t} value`;
+    }
+    return null;
   }
 
   private useGrant(domain: string, cls: ActionClass, requestHash: string): boolean {

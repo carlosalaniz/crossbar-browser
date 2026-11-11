@@ -12,15 +12,11 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
 - `node scripts/stack-smoke.ts <setup-code>` checks a running stack. `node scripts/agent-smoke.ts` lets a real model (OpenRouter key in `.env`, never committed) drive Crossbar over MCP: comment held → approved; private page asks; taint exit with 90 chars of overlap held → denied.
 - Decisions added this session: ADR 0009 (in-house CDP client), ADR 0010 (WebSocket block via DNR, Chromium/CfT only). Both **Proposed** pending owner review.
 - **Open:**
-  - CODEOWNERS uses a placeholder team `@crossbarhq/owners`.
   - The CLA text isn't written.
   - Harbor package in `harbor/` (git source) passes Harbor's `validatePackageFolder`. Harbor can't yet give the browser its sandbox; the operator must turn the "Chromium sandbox" setting off knowingly, or Harbor adds a permission that renders `deploy/browser/seccomp.json` (proposed to the Harbor session; needs the owner's decision).
-  - Passkeys are tested only up to options/rejection (needs a virtual authenticator test).
-  - The taint subresource gap (see the threat model).
+  - Short or paraphrased leaks in subresource URLs after taint still pass (see the threat model).
   - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
 - **Next:**
-  - proxy-side taint for subresources;
-  - virtual-authenticator passkey test;
   - real Reddit fixtures via a manual refresh script;
   - accuracy and prompt-rate measurements against real sessions.
 - Design sources:

@@ -57,6 +57,7 @@ export interface TicketView {
   offerAlways: boolean;
   hasScreenshot: boolean;
   takeover: boolean;
+  takeoverTab?: string | null;
 }
 
 const VERB: Record<string, string> = {

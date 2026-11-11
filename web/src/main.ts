@@ -367,7 +367,7 @@ function stream(tab: string, img: HTMLImageElement, onUrl: (u: string) => void, 
 
 async function takeoverScreen(id: string) {
   const err = h("p", { class: "error" });
-  let claim: TicketView & { tab: string; origin: string };
+  let claim: TicketView & { tab: string; origin: string; takeoverTab?: string | null };
   try {
     claim = await api("POST", `/api/tickets/${id}/claim`);
   } catch (e) {
@@ -386,13 +386,26 @@ async function takeoverScreen(id: string) {
   });
   // A native text field, so your password manager can fill it; text is forwarded as keystrokes.
   const field = h("input", { class: "input", placeholder: "Type here, then Send", autocomplete: "current-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false" }) as HTMLInputElement;
-  const stop = stream(claim.tab, img, (u) => {
+  const onUrl = (u: string) => {
     // The real origin is drawn outside the stream, so the page can't fake it.
     bar.lastChild!.textContent = originOf(u);
     const differs = originOf(u) !== claim.origin;
     warn.hidden = !differs;
     warn.textContent = differs ? `You're now on ${originOf(u)}, not ${claim.origin}. Check before typing a password.` : "";
-  }, (m) => (css = { w: m.w, h: m.h }));
+  };
+  let current = claim.tab;
+  let stopStream = stream(current, img, onUrl, (m) => (css = { w: m.w, h: m.h }));
+  const stop = () => stopStream();
+  // A sign-in window the page opens becomes what you're driving; follow it, and come back when it closes.
+  const follow = setInterval(async () => {
+    const t = await api<TicketView & { takeoverTab: string | null }>("GET", `/api/tickets/${id}`).catch(() => null);
+    if (t?.takeoverTab && t.takeoverTab !== current) {
+      current = t.takeoverTab;
+      stopStream();
+      stopStream = stream(current, img, onUrl, (m) => (css = { w: m.w, h: m.h }));
+    }
+  }, 1000);
+  cleanup.push(() => clearInterval(follow));
   cleanup.push(stop);
   render(
     shell(

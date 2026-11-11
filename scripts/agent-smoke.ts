@@ -38,7 +38,8 @@ async function human(method: string, path: string, body?: unknown) {
   const r = await fetch(ORIGIN + path, { method, headers: { "content-type": "application/json", "x-crossbar": "1", cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
   const sc = r.headers.get("set-cookie");
   if (sc) cookie = sc.split(";")[0]!;
-  return r.json() as Promise<Record<string, unknown> & Array<Record<string, unknown>>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return r.json() as Promise<any>;
 }
 await human("POST", "/api/setup", { code, username: "carlos", password: "a long password here" });
 const { secret } = (await human("POST", "/api/tokens", { agentName: "smoke-agent", kind: "act" })) as { secret: string };

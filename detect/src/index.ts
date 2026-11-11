@@ -36,6 +36,11 @@ export interface Signature {
   containers?: string[];
   /** Frame and container evidence counts on any page, not only short ones (a 3-D Secure frame on a long checkout). */
   anyPage?: boolean;
+  /**
+   * If any frame's full URL matches this, the vendor's widget is the invisible kind (it only becomes a
+   * challenge when it shows itself): its frame evidence is ignored. A visible container still counts.
+   */
+  invisibleMarker?: RegExp;
   /** Response header name -> value pattern. */
   headers?: Record<string, RegExp>;
   status?: number[];
@@ -50,14 +55,29 @@ export const SIGNATURES: Signature[] = [
   { id: "cloudflare-challenge-header", kind: "captcha", vendor: "cloudflare", headers: { "cf-mitigated": /challenge/i } },
   { id: "cloudflare-turnstile", kind: "captcha", vendor: "cloudflare", frames: [/challenges\.cloudflare\.com\//i, /\/cdn-cgi\/challenge-platform\//i], containers: [".cf-turnstile", "[data-sitekey].cf-turnstile"] },
   { id: "cloudflare-interstitial", kind: "captcha", vendor: "cloudflare", text: [/Verify you are human|Checking (if the site connection is secure|your browser)|Just a moment\.\.\./i], maxTextLength: 2000 },
-  { id: "recaptcha", kind: "captcha", vendor: "recaptcha", frames: [/\/recaptcha\/(api2|enterprise)\/(anchor|bframe)/i, /recaptcha\.net\/recaptcha\//i], containers: [".g-recaptcha", "#g-recaptcha"] },
-  { id: "hcaptcha", kind: "captcha", vendor: "hcaptcha", frames: [/hcaptcha\.com\/captcha/i, /newassets\.hcaptcha\.com/i, /\/captcha\/v1\/[^/]+\/static\/hcaptcha\.html/i], containers: [".h-captcha"] },
+  {
+    id: "recaptcha",
+    kind: "captcha",
+    vendor: "recaptcha",
+    frames: [/\/recaptcha\/(api2|enterprise)\/(anchor|bframe)/i, /recaptcha\.net\/recaptcha\//i],
+    invisibleMarker: /\/recaptcha\/(api2|enterprise)\/anchor\?[^#]*\bsize=invisible\b/i,
+    containers: [".g-recaptcha:not([data-size=invisible])", "#g-recaptcha:not([data-size=invisible])"],
+  },
+  {
+    id: "hcaptcha",
+    kind: "captcha",
+    vendor: "hcaptcha",
+    frames: [/hcaptcha\.com\/captcha/i, /newassets\.hcaptcha\.com/i, /\/captcha\/v1\/[^/]+\/static\/hcaptcha\.html/i],
+    // Stripe's Payment Element loads an invisible hCaptcha on every checkout.
+    invisibleMarker: /[#&]frame=checkbox-invisible\b|HCaptchaInvisible|hcaptcha-invisible/i,
+    containers: [".h-captcha:not([data-size=invisible])"],
+  },
   { id: "arkose", kind: "captcha", vendor: "arkose", frames: [/arkoselabs\.com|funcaptcha\.com|\/fc\/gc\//i], containers: ["#FunCaptcha", "[data-pkey]"] },
   { id: "datadome", kind: "captcha", vendor: "datadome", frames: [/captcha-delivery\.com|geo\.captcha-delivery\.com/i], headers: { "x-datadome": /.+/ }, containers: ["[class*=datadome]", "#ddv1-captcha-container"] },
   { id: "perimeterx", kind: "captcha", vendor: "perimeterx", text: [/Press & Hold to confirm you are a human/i], frames: [/px-cdn\.net|perimeterx\.net|px-captcha/i], containers: ["#px-captcha", "[id^=px-captcha]"] },
   { id: "aws-waf", kind: "captcha", vendor: "aws-waf", frames: [/awswaf\.com/i], headers: { "x-amzn-waf-action": /captcha|challenge/i } },
   // 3-D Secure and other step-up checks by a card issuer (ADR 0011). Matched by frame shape, not one provider's URLs.
-  { id: "three-d-secure-frame", kind: "verification", vendor: "3ds", anyPage: true, frames: [/three[-_]?d[-_]?s|3d[-_]?secure|\b3ds2?\b|\/acs(\/|$|\?)|[./-]acs[.-]/i] },
+  { id: "three-d-secure-frame", kind: "verification", vendor: "3ds", anyPage: true, frames: [/three[-_]?d[-_]?s|3d[-_]?secure|\/acs(\/|$)|(^|[./-])acs[.-]/i] },
   { id: "three-d-secure-text", kind: "verification", vendor: "3ds", maxTextLength: 3000, text: [/\b3-?D Secure\b|verify (this|your) (payment|purchase) with your bank|authenticate (this|your) (payment|purchase)/i] },
   { id: "rate-limited", kind: "soft_block", vendor: "generic", status: [429] },
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
@@ -75,6 +95,15 @@ export const SIGNATURES: Signature[] = [
   { id: "anti-adblock", kind: "soft_block", vendor: "anti-adblock", text: [/(disable|turn off|pause) (your )?ad ?block(er)?|whitelist (this|our) site/i], maxTextLength: 3000 },
   { id: "consent-wall", kind: "consent", vendor: "generic", text: [/we value your privacy|accept all cookies|consent to (the use of )?cookies/i], maxTextLength: 1200 },
 ];
+
+function hostPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return url.replace(/[?#].*$/, "");
+  }
+}
 
 function originOf(url: string): string {
   try {
@@ -102,7 +131,10 @@ function matches(sig: Signature, f: PageFactsLike): string[] | null {
     }
   }
   if (sig.frames && widgetCounts) {
-    const hit = f.frameUrls.find((u) => sig.frames!.some((re) => re.test(u)));
+    // Child frames only, matched on host and path: a query or fragment (?case=3ds, #url=…) is page data, not a frame's identity.
+    const children = f.frameUrls.filter((u) => u !== f.url);
+    const invisible = sig.invisibleMarker && children.some((u) => sig.invisibleMarker!.test(u));
+    const hit = invisible ? undefined : children.find((u) => sig.frames!.some((re) => re.test(hostPath(u))));
     if (hit) {
       any = true;
       ev.push(`frame ${hit.slice(0, 120)}`);

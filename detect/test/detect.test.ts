@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { detect, type PageFactsLike } from "../src/index.ts";
 
@@ -27,10 +27,10 @@ test("captcha outranks login", () => assert.equal(detect({ ...base, hasPasswordF
 
 test("a widget's container counts on a short page or with a login form", () => {
   assert.equal(detect({ ...base, textLength: 800, captchaContainers: [".cf-turnstile"] })?.vendor, "cloudflare");
-  assert.equal(detect({ ...base, textLength: 20000, hasPasswordField: true, captchaContainers: [".g-recaptcha"] })?.kind, "captcha");
+  assert.equal(detect({ ...base, textLength: 20000, hasPasswordField: true, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] })?.kind, "captcha");
 });
 test("a reCAPTCHA in a long article's comment form is not a wall", () => {
-  assert.equal(detect({ ...base, textLength: 20000, captchaContainers: [".g-recaptcha"], frameUrls: ["https://www.google.com/recaptcha/api2/anchor?k=x"] }), null);
+  assert.equal(detect({ ...base, textLength: 20000, captchaContainers: [".g-recaptcha:not([data-size=invisible])"], frameUrls: ["https://www.google.com/recaptcha/api2/anchor?k=x"] }), null);
 });
 test("widget frames are recognised by path, not only by vendor host", () => {
   assert.equal(detect({ ...base, frameUrls: ["http://captcha.test/recaptcha/api2/anchor?k=x"] })?.vendor, "recaptcha");
@@ -57,4 +57,33 @@ test("3-D Secure is a verification, by frame shape or text (ADR 0011)", () => {
   // A long checkout with the bank frame still counts; a long article about 3-D Secure doesn't.
   assert.equal(detect({ ...base, textLength: 9000, frameUrls: ["https://acs.examplebank.com/challenge"] })?.kind, "verification");
   assert.equal(detect({ ...base, textLength: 9000, textSample: "How 3-D Secure works, explained" }), null);
+});
+
+describe("frame precision (findings from a live Stripe run)", () => {
+  const top = "http://site-a.test:8090/checkout/stripe/element?case=3ds";
+  const stripePage = { ...base, url: top, textLength: 900 };
+  const invisibleHcaptcha = [
+    "https://newassets.hcaptcha.com/captcha/v1/abc123/static/hcaptcha.html#frame=checkbox-invisible",
+    "https://newassets.hcaptcha.com/captcha/v1/abc123/static/hcaptcha.html#frame=challenge&id=x&host=b.stripecdn.com",
+    "https://b.stripecdn.com/stripethirdparty-srv/assets/v37.1/HCaptchaInvisible.html",
+    "https://js.stripe.com/v3/hcaptcha-invisible-1a2b3c.html",
+  ];
+  const telemetry = ["https://js.stripe.com/v3/m-outer-abc.html#url=http%3A%2F%2Fsite-a.test%2Fcheckout%3Fcase%3D3ds&title=Pay%20(3ds)", "https://m.stripe.network/inner.html#url=case%3D3ds"];
+  test("a Stripe checkout before Pay is not a wall (invisible hCaptcha, '3ds' only in URLs' data)", () => {
+    assert.equal(detect({ ...stripePage, frameUrls: [top, ...invisibleHcaptcha, ...telemetry, "https://js.stripe.com/v3/elements-inner-accessory-target-9f8e.html"] }), null);
+  });
+  test("after Pay, the real 3-D Secure frames are a verification", () => {
+    const after = [top, ...invisibleHcaptcha, "https://js.stripe.com/v3/three-ds-2-challenge-77aa.html#intentId=pi_1&hosted=false", "https://testmode-acs.stripe.com/3d_secure_2_test/acct_1/tds2_1/x"];
+    assert.equal(detect({ ...stripePage, frameUrls: after })?.kind, "verification");
+    assert.equal(detect({ ...stripePage, frameUrls: [top, "https://hooks.stripe.com/3d_secure_2/hosted?merchant=x&payment_intent=pi_1"] })?.kind, "verification");
+  });
+  test("'3ds' in the page's own URL or a path segment isn't a bank check", () => {
+    assert.equal(detect({ ...base, url: "https://www.nintendo.com/3ds/", frameUrls: ["https://www.nintendo.com/3ds/"] }), null);
+    assert.equal(detect({ ...base, url: "https://shop.example/search?q=3ds", frameUrls: ["https://shop.example/search?q=3ds", "https://cdn.example/embed?q=3ds"] }), null);
+  });
+  test("invisible reCAPTCHA isn't a wall; a visible container still is", () => {
+    const frames = ["https://www.google.com/recaptcha/api2/anchor?ar=1&k=x&size=invisible&cb=1", "https://www.google.com/recaptcha/api2/bframe?hl=en&v=1&k=x"];
+    assert.equal(detect({ ...base, textLength: 900, frameUrls: frames }), null);
+    assert.equal(detect({ ...base, textLength: 900, frameUrls: frames, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] })?.kind, "captcha");
+  });
 });

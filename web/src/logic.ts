@@ -82,7 +82,7 @@ export function headline(t: TicketView): string {
   if (t.kind === "challenge") {
     const kind = String(f.kind);
     const d = String(f.domain ?? "a site");
-    return kind === "login" ? `${agent} needs you to log in to ${d}` : kind === "captcha" ? `${agent} hit a ${String(f.vendor)} check on ${d}` : `${d} is blocking ${agent}`;
+    return kind === "login" ? `${agent} needs you to log in to ${d}` : kind === "verification" ? `${agent} needs you to confirm a payment with your bank on ${d}` : kind === "captcha" ? `${agent} hit a ${String(f.vendor)} check on ${d}` : `${d} is blocking ${agent}`;
   }
   if (t.kind === "proposal") return `${agent} asks to change ${String(f.pattern)}`;
   return `${agent} wants to ${VERB[String(f.actionClass)] ?? "send data"}`;

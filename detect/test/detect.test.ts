@@ -47,3 +47,14 @@ test("a full page with an 'Open in app' banner is not a soft block", () => {
   assert.equal(detect({ ...base, textLength: 12000, textSample: "Open in app. See more in the app. A long thread with many comments…" }), null);
   assert.equal(detect({ ...base, textLength: 900, textSample: "Get the app for notifications. A short post with everything visible." }), null);
 });
+
+test("3-D Secure is a verification, by frame shape or text (ADR 0011)", () => {
+  for (const u of ["https://hooks.stripe.com/3d_secure_2/hosted?x=1", "https://js.stripe.com/v3/three-ds-2-challenge-abc.html", "https://acs.examplebank.com/challenge", "https://secure.bank.example/acs?tx=1"]) {
+    assert.equal(detect({ ...base, frameUrls: ["https://shop.example/checkout", u] })?.kind, "verification", u);
+  }
+  assert.equal(detect({ ...base, textLength: 600, textSample: "Verify this payment with your bank" })?.kind, "verification");
+  assert.equal(detect({ ...base, frameUrls: ["https://cdn.example/accessories.png", "https://example.com/access"] }), null);
+  // A long checkout with the bank frame still counts; a long article about 3-D Secure doesn't.
+  assert.equal(detect({ ...base, textLength: 9000, frameUrls: ["https://acs.examplebank.com/challenge"] })?.kind, "verification");
+  assert.equal(detect({ ...base, textLength: 9000, textSample: "How 3-D Secure works, explained" }), null);
+});

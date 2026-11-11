@@ -499,7 +499,7 @@ export class AgentSession {
       existing ??
       this.s.tickets.create({ userId: this.userId, tokenId: this.token.id, agentName: this.token.agentName, kind: "challenge", facts: { ...block, url, profile: tab.profile, sessionId: this.id, domain: registrable(hostOf(url)) } });
     if (!existing) this.s.notifier.ticket(t);
-    const reason = block.kind === "login" ? `Log in to ${registrable(hostOf(url))} is needed.` : block.kind === "captcha" ? `A ${block.vendor} check is in the way.` : block.kind === "consent" ? "A consent wall is in the way." : "The site is blocking or limiting this request.";
+    const reason = block.kind === "login" ? `Log in to ${registrable(hostOf(url))} is needed.` : block.kind === "verification" ? "The bank wants the payment confirmed by a person (3-D Secure)." : block.kind === "captcha" ? `A ${block.vendor} check is in the way.` : block.kind === "consent" ? "A consent wall is in the way." : "The site is blocking or limiting this request.";
     return { state: "blocked", reason, ticket: ticketRef(t), hint: "A person has been asked to handle it. Call wait_for_ticket, then retry." };
   }
 

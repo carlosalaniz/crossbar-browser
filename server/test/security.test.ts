@@ -493,3 +493,25 @@ describe("detection findings from the test site", () => {
     assert.equal(sites.resolve("u", "https://idp.test/").level, "read");
   });
 });
+
+describe("3-D Secure (ADR 0011)", () => {
+  test("a bank check is a verification ticket; resolving it never raises the site's level", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://shop.example/pay", { title: "Checkout", facts: { textLength: 8000, frameUrls: ["https://shop.example/pay", "https://acs.examplebank.com/challenge?tx=1"] } });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    const r = await c.call("open", { url: "https://shop.example/pay" });
+    assert.equal(r.state, "blocked");
+    assert.match(String(r.reason), /bank/);
+    const tk = t.services.tickets.get(r.ticket!.id)!;
+    assert.equal((tk.facts as { kind: string }).kind, "verification");
+    await t.api("POST", `/api/tickets/${tk.id}/claim`, { user: "alice" });
+    // Same profile as the tab it appeared in; no switch to the signed-in profile.
+    assert.ok(!pool.tabs.some((x) => x.profile === "personal"));
+    pool.pages.set("https://shop.example/pay", { title: "Paid", facts: { textLength: 8000, frameUrls: ["https://shop.example/pay"] } });
+    const done = await t.api("POST", `/api/tickets/${tk.id}/done`, { user: "alice" });
+    assert.equal(done.json.verified, true);
+    assert.equal(t.services.sites.resolve("alice", "shop.example").level, "read");
+  });
+});

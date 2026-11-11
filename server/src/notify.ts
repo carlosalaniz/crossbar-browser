@@ -34,7 +34,7 @@ export function describeTicket(t: Ticket): { title: string; body: string } {
   const domain = String(f.domain ?? "a site");
   if (t.kind === "challenge") {
     const kind = String(f.kind);
-    return { title: `${agent} needs you on ${domain}`, body: kind === "login" ? `Log in to ${domain} so ${agent} can continue.` : kind === "captcha" ? `A ${String(f.vendor)} check is blocking ${domain}.` : `${domain} is blocking ${agent}.` };
+    return { title: `${agent} needs you on ${domain}`, body: kind === "login" ? `Log in to ${domain} so ${agent} can continue.` : kind === "verification" ? `Confirm the payment on ${domain} with your bank.` : kind === "captcha" ? `A ${String(f.vendor)} check is blocking ${domain}.` : `${domain} is blocking ${agent}.` };
   }
   if (t.kind === "proposal") return { title: `${agent} asks for more access`, body: `Change ${String(f.pattern ?? domain)} settings. Review the change before approving.` };
   return { title: `${agent} wants to ${VERB[String(f.actionClass)] ?? "send data"}`, body: `${String(f.method ?? "")} to ${domain}`.trim() };

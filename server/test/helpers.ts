@@ -125,8 +125,8 @@ export class FakeTab implements Tab {
   async emulate(d: DeviceKind) {
     this.device = d;
   }
-  async startScreencast(onFrame: (f: string) => void) {
-    onFrame("ZmFrZQ==");
+  async startScreencast(onFrame: (f: string, meta: { width: number; height: number }) => void) {
+    onFrame("ZmFrZQ==", { width: 390, height: 844 });
   }
   async stopScreencast() {}
   async input(ev: InputEvent) {

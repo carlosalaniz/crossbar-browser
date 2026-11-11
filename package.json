@@ -22,10 +22,13 @@
     "test": "node --test --test-concurrency=1 \"*/test/**/*.test.ts\"",
     "test:proxy": "node --test \"proxy/test/**/*.test.ts\"",
     "test:browser": "node --test --test-concurrency=1 \"browser/test/**/*.test.ts\"",
-    "check": "npm run typecheck && npm run lint && npm run test",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run test:web && npm run build:web",
     "dev": "echo 'npm run dev arrives in step 6 (compose stack + local test site)' && exit 1",
     "pretest": "node scripts/ensure-browser.mjs > /dev/null",
-    "spike": "node browser/spike/matrix.ts"
+    "spike": "node browser/spike/matrix.ts",
+    "build:web": "node scripts/build-web.mjs",
+    "test:web": "vitest run --root web --dir web/test",
+    "start": "node server/src/main.ts"
   },
   "devDependencies": {
     "@puppeteer/browsers": "^3.2.7",
@@ -35,6 +38,7 @@
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
     "typescript": "~6.0.0",
-    "typescript-eslint": "^8.72.2"
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
   }
 }

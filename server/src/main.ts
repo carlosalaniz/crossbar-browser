@@ -62,7 +62,20 @@ setInterval(() => {
   services.tokens.sweep();
   services.activity.retention();
 }, 6 * 3600_000).unref();
-app.server.listen(port, env.CROSSBAR_HOST ?? "0.0.0.0", () => console.log(`Crossbar ${version} on ${appOrigin} (port ${port})`));
+// "::" is dual stack, so http://localhost works whether it resolves to ::1 or 127.0.0.1.
+// Hosts and containers without IPv6 fall back to IPv4.
+const host = env.CROSSBAR_HOST ?? "::";
+app.server.once("error", (e: NodeJS.ErrnoException) => {
+  if (host === "::" && (e.code === "EAFNOSUPPORT" || e.code === "EADDRNOTAVAIL")) app.server.listen(port, "0.0.0.0", ready);
+  else {
+    console.error(e.code === "EADDRINUSE" ? `Port ${port} is in use. Set CROSSBAR_PORT to a free port.` : e.message);
+    process.exit(1);
+  }
+});
+function ready() {
+  console.log(`Crossbar ${version} on ${appOrigin} (port ${port})`);
+}
+app.server.listen(port, host, ready);
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {

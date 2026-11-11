@@ -416,3 +416,16 @@ describe("site ladder defaults", () => {
     await t.close();
   });
 });
+
+describe("packaging", () => {
+  test("Harbor Dockerfiles are generated from deploy/Dockerfile and in sync", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    // @ts-expect-error plain ESM script without types
+    const { render, HARBOR_TARGETS } = await import("../../scripts/harbor-dockerfiles.mjs");
+    for (const [svc, target] of Object.entries(HARBOR_TARGETS as Record<string, string>)) {
+      const file = readFileSync(resolve(import.meta.dirname, `../../harbor/build/${svc}.Dockerfile`), "utf8");
+      assert.equal(file, render(target), `harbor/build/${svc}.Dockerfile is stale: run node scripts/harbor-dockerfiles.mjs`);
+    }
+  });
+});

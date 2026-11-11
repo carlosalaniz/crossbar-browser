@@ -1,0 +1,93 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: crossbar
+  name: Crossbar
+  description: Your own browser, lent to your agents over MCP, with you in the loop for logins, captchas and anything with consequences.
+release:
+  revision: "1"
+  version: 0.1.0
+  minHarbor: "0.36.0"
+deployment:
+  compose: compose.yaml
+  multiInstance: false
+  services:
+    app: application
+    browser: infrastructure
+    proxy: infrastructure
+endpoints:
+  web:
+    service: app
+    containerPort: 8080
+    scheme: http
+    exposure: direct
+    # Passkeys and the phone approval flow need a secure context.
+    browserContext: secure
+health:
+  endpoint: web
+  path: /healthz
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 300
+ui:
+  primaryEndpoint: web
+storage:
+  - id: app-data
+    composeVolume: app-data
+    purpose: Database, master key and activity log at /data (app). Back this up.
+    retention: retain
+  - id: profiles
+    composeVolume: profiles
+    purpose: Browser profiles with your logins at /profiles (browser)
+    retention: retain
+secrets:
+  - id: browser-secret
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - service: app
+        environment: CROSSBAR_BROWSER_SECRET
+      - service: browser
+        environment: CROSSBAR_BROWSER_SECRET
+configuration:
+  - service: app
+    environment: CROSSBAR_ORIGIN
+    endpoint: web
+    format: origin
+settings:
+  - id: chromium-sandbox
+    label: Chromium sandbox
+    help: >-
+      Harbor can't yet give the browser the namespaces Chromium's sandbox needs, so with this on the browser
+      won't start. Off: a renderer exploit runs unconfined in the browser container (your browser logins,
+      no Crossbar keys, only the proxy reachable).
+    type: boolean
+    default: true
+    onValue: "on"
+    offValue: "off"
+    bindings:
+      - service: browser
+        environment: CROSSBAR_CHROME_SANDBOX
+  - id: block-ips
+    label: Your home's public IP addresses
+    help: Comma-separated. Pages can't reach these through the browser (so they can't reach your router from outside).
+    type: string
+    default: ""
+    maxLength: 512
+    bindings:
+      - service: proxy
+        environment: CROSSBAR_BLOCK_IPS
+permissions:
+  # NET_ADMIN lets the browser container firewall itself so its only way out is the proxy,
+  # because Harbor packages can't declare an internal-only network. It drops the capability before
+  # starting Chromium.
+  browser: [net-admin]
+network:
+  internet: direct
+presentation:
+  icon: icon.svg
+  tagline: Lend your browser to your agents, with you in the loop
+  category: ai
+  developer: Carlos Alaniz
+  website: https://github.com/carlosalaniz/crossbar-browser

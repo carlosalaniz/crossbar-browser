@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: harbor/build/app.Dockerfile
+    environment:
+      CROSSBAR_BROWSER_URL: http://browser:9300
+      CROSSBAR_DATA: /data
+    volumes:
+      - {type: volume, source: app-data, target: /data}
+    depends_on:
+      browser:
+        condition: service_started
+  browser:
+    build:
+      context: ..
+      dockerfile: harbor/build/browser.Dockerfile
+    environment:
+      CROSSBAR_PROXY: http://proxy:3128
+      CROSSBAR_PROFILES: /profiles
+    volumes:
+      - {type: volume, source: profiles, target: /profiles}
+    depends_on:
+      proxy:
+        condition: service_started
+  proxy:
+    build:
+      context: ..
+      dockerfile: harbor/build/proxy.Dockerfile
+volumes:
+  app-data: {}
+  profiles: {}

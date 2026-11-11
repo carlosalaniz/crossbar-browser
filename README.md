@@ -43,6 +43,7 @@ Each site sits on a ladder: **blocked → can read (anonymous profile) → can r
 ```sh
 git clone https://github.com/carlosalaniz/crossbar-browser && cd crossbar-browser
 printf 'CROSSBAR_BROWSER_SECRET=%s\nCROSSBAR_ORIGIN=http://localhost:8080\n' "$(openssl rand -base64 36)" > deploy/.env
+# Port 8080 taken? Add CROSSBAR_PORT=8081 and CROSSBAR_ORIGIN=http://localhost:8081 to deploy/.env.
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 docker compose -f deploy/compose.yaml logs app | grep "setup code"
 ```
@@ -55,6 +56,7 @@ Open http://localhost:8080, enter the setup code and create your account. Put it
 npm ci
 npm run check      # typecheck, lint, all tests (installs a pinned Chrome for Testing on first run)
 npm run dev        # docker compose stack + a local test site at http://testsite.test:8090
+                   # (uses port 8080, or the next free one; it prints the URL)
 npm run dev:local  # the same without Docker: proxy, test site and app in one process
 ```
 

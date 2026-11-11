@@ -58,3 +58,11 @@ EXPOSE 9300
 VOLUME ["/profiles"]
 ENTRYPOINT ["tini", "--"]
 CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x1024x24 -nolisten tcp", "node", "browser/src/host.ts"]
+
+# ---- browser for hosts without internal networks (Harbor): firewalls itself to the proxy, then
+# drops root and all capabilities. Needs NET_ADMIN (Harbor's net-admin permission). ----
+FROM browser AS browser-firewalled
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends iptables util-linux && rm -rf /var/lib/apt/lists/*
+COPY --chmod=0755 deploy/browser/egress-firewall.sh /usr/local/bin/egress-firewall
+CMD ["egress-firewall"]

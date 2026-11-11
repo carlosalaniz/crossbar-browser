@@ -7,8 +7,9 @@ import type { AddressInfo } from "node:net";
 import { lookup } from "node:dns/promises";
 import { createEgressProxy } from "../proxy/src/proxy.ts";
 import { startSite } from "../browser/test/site.ts";
+import { freePort } from "./free-port.mjs";
 
-const site = await startSite({ port: 8090 });
+const site = await startSite({ port: await freePort(8090) });
 const proxy = createEgressProxy({
   // The test site lives on loopback; only the exact name "testsite.test" may reach it.
   resolve: async (h) => (h === "testsite.test" ? ["127.0.0.1"] : (await lookup(h, { all: true, verbatim: true })).map((a) => a.address)),
@@ -19,7 +20,8 @@ await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
 const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
 console.log(`egress proxy ${proxyUrl}; test site http://testsite.test:${site.port}/pages/article`);
 
-const port = process.env.CROSSBAR_PORT ?? "8080";
+const port = process.env.CROSSBAR_PORT ?? String(await freePort(8080));
+if (port !== "8080" && !process.env.CROSSBAR_PORT) console.log(`Port 8080 is in use; using ${port}.`);
 const app = spawn(process.execPath, [resolve(import.meta.dirname, "../server/src/main.ts")], {
   stdio: "inherit",
   env: {

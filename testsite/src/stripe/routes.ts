@@ -20,7 +20,7 @@ export const ELEMENT_CASES: Record<string, { card: string; expect: string }> = {
   insufficient: { card: "4000 0000 0000 9995", expect: "card_declined / insufficient_funds" },
   expired: { card: "4000 0000 0000 0069", expect: "expired_card" },
   cvc: { card: "4000 0000 0000 0127", expect: "incorrect_cvc" },
-  "3ds": { card: "4000 0027 6000 3184", expect: "3D Secure challenge in a bank iframe; a person completes it" },
+  "3ds": { card: "4000 0027 6000 3184", expect: "the bank asks for authentication (3DS2) in an iframe; a person completes it" },
 };
 
 interface Order {

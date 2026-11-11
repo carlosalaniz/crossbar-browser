@@ -242,3 +242,15 @@ test("README scenario table matches scenarios.json (regenerate: node testsite/sr
   const text = readFileSync(README, "utf8");
   assert.equal(text, renderReadme(text));
 });
+
+test("createConfiguredTestsite: Stripe routes exist with test keys, and are disabled without a route out", async () => {
+  const { createConfiguredTestsite } = await import("../src/boot.ts");
+  const keys = { STRIPE_PUBLISHABLE_KEY: "pk_" + "test_abc", STRIPE_SECRET_KEY: "sk_" + "test_abc" };
+  const on = createConfiguredTestsite(keys);
+  assert.ok(on.stripe);
+  assert.equal(on.app.features.get("stripe")?.enabled, true);
+  const off = createConfiguredTestsite({ ...keys, TESTSITE_NO_EGRESS: "1" });
+  assert.equal(off.stripe, null);
+  assert.match(off.app.features.get("stripe")?.why ?? "", /no route out/);
+  assert.throws(() => createConfiguredTestsite({ ...keys, STRIPE_SECRET_KEY: "sk_" + "live_abc" }), /test-mode/);
+});

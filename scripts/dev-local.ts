@@ -8,13 +8,14 @@ import type { AddressInfo } from "node:net";
 import { lookup } from "node:dns/promises";
 import { createEgressProxy } from "../proxy/src/proxy.ts";
 import { devAllowlistFromEnv, devAllowlistWarning } from "../proxy/src/dev-allowlist.ts";
-import { createTestsite } from "../testsite/src/app.ts";
+import { createConfiguredTestsite } from "../testsite/src/boot.ts";
 import { loadEnv } from "../testsite/src/env.ts";
 import { freePort } from "./free-port.mjs";
 
 // The test site (testsite/) on loopback, answering for every *.test scenario host and testsite.test.
 const sitePort = await freePort(8090);
-const { server: siteServer } = createTestsite({ env: loadEnv() });
+// Same setup as `npm run testsite`, so the live Stripe scenarios work here when testsite/.env has test keys.
+const { server: siteServer } = createConfiguredTestsite(loadEnv());
 await new Promise<void>((r) => siteServer.listen(sitePort, "127.0.0.1", r));
 const site = { port: sitePort, close: () => new Promise<void>((r) => siteServer.close(() => r())) };
 // Dev-only allowlist: the test-site names are pinned to 127.0.0.1:<sitePort>; everything else is checked as usual.

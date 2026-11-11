@@ -43,6 +43,8 @@ const app = spawn(process.execPath, [resolve(import.meta.dirname, "../server/src
     CROSSBAR_HOST_RESOLVER_RULES: "MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
     CROSSBAR_HEADLESS: process.env.CROSSBAR_HEADLESS ?? "1",
     CROSSBAR_PACE_MS: process.env.CROSSBAR_PACE_MS ?? "1000",
+    // The test site's sign-in provider (testsite/README.md). Only tightens.
+    CROSSBAR_SIGNIN_PROVIDERS: process.env.CROSSBAR_SIGNIN_PROVIDERS ?? "accounts.idp.test",
   },
 });
 const stop = () => {

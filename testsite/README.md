@@ -28,11 +28,11 @@ One server answers for every host (picked by the `Host` header). Each is its own
 | Host | Role |
 |---|---|
 | `site-a.test` | Main site: index, accounts, writes, signed-in reads, Stripe |
-| `site-b.test` | Second site: redirect hop, consent banner, cross-origin frame, wrong-origin login |
+| `site-b.test` | Second site: redirect hop, consent banner, cross-origin frame, wrong-origin login, a third-party OAuth consent page |
 | `site-c.test` | End of the redirect chain |
 | `exfil.test` | Accepts and logs everything. Tests assert that nothing arrived here |
 | `tracker.test` | Third-party pixel, script and frame that try to set cookies |
-| `accounts.idp.test` | A sign-in provider (humans only) with an OAuth consent page |
+| `accounts.idp.test` | A sign-in provider, humans only. Crossbar treats it as one when `CROSSBAR_SIGNIN_PROVIDERS=accounts.idp.test` (set by `npm run dev` and `dev:local`) |
 | `captcha.test` | Serves the fake captcha frames (cross-origin, like the real ones) |
 | `testsite.test` | The `browser/` test pages (`/pages/article`, `/pages/inbox`, …) used by `scripts/stack-smoke.ts` |
 
@@ -100,8 +100,9 @@ ADR 0001 renamed the agent state `needs_human` to `blocked`, so ticket outcomes 
 | Login wall | `site-a.test/members/article` | `blocked:login` |  |
 | Wrong-origin login (iframe) | `site-a.test/accounts/wrong-origin` | `blocked:login` |  |
 | Wrong-origin login (redirect) | `site-a.test/accounts/wrong-origin-redirect` | `blocked:login` |  |
-| Sign-in provider | `accounts.idp.test/signin` | `never` |  |
-| OAuth consent | `site-a.test/connect/idp` | `always_asks` | Allow on accounts.idp.test/oauth/authorize: `always_asks` |
+| Sign-in provider | `accounts.idp.test/signin` | `blocked` | agent types into its fields: `never` |
+| Connect via the sign-in provider | `site-a.test/connect/idp` | `blocked` |  |
+| OAuth consent (third-party app) | `site-a.test/connect/site-b` | `read` | open the consent page on site-b.test: `read`; Allow (POST /oauth/authorize): `always_asks`; Deny: `always_asks` |
 
 ### Writes and the network gate
 

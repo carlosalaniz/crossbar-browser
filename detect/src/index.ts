@@ -58,6 +58,15 @@ export const SIGNATURES: Signature[] = [
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
   { id: "reddit-blocked", kind: "soft_block", vendor: "reddit", text: [/You've been blocked by network security|whoa there, pardner/i], maxTextLength: 3000 },
   { id: "login-url", kind: "login", vendor: "generic", url: [/\/(login|signin|sign-in|log-in|auth\/login|accounts\/login)(\/|\?|$)/i] },
+  // Truncated content behind an app gate. Limited to shortish pages: a full page with an "Open in app"
+  // banner isn't a soft block.
+  {
+    id: "app-gate",
+    kind: "soft_block",
+    vendor: "app-gate",
+    text: [/\b(see|read|view) (more|the (full|rest)( \w+)?) in the app\b|continue (reading|in the app)[^.]{0,60}\bapp\b|(open|use) the app to (see|read|view|continue)|to keep reading,? (open|get|download) the app/i],
+    maxTextLength: 4000,
+  },
   { id: "anti-adblock", kind: "soft_block", vendor: "anti-adblock", text: [/(disable|turn off|pause) (your )?ad ?block(er)?|whitelist (this|our) site/i], maxTextLength: 3000 },
   { id: "consent-wall", kind: "consent", vendor: "generic", text: [/we value your privacy|accept all cookies|consent to (the use of )?cookies/i], maxTextLength: 1200 },
 ];

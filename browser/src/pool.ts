@@ -21,7 +21,7 @@ export interface TabPolicy {
 }
 
 /** Container elements captcha widgets render into (present even before the widget's iframe loads). */
-export const CAPTCHA_CONTAINERS = [".cf-turnstile", "[data-sitekey].cf-turnstile", ".g-recaptcha", "#g-recaptcha", ".h-captcha", "#FunCaptcha", "[data-pkey]", "#px-captcha", "[id^=px-captcha]", ".geetest_holder", "#captcha-container", "[class*=datadome]", "#ddv1-captcha-container"];
+export const CAPTCHA_CONTAINERS = [".cf-turnstile", "[data-sitekey].cf-turnstile", ".g-recaptcha:not([data-size=invisible])", "#g-recaptcha:not([data-size=invisible])", ".h-captcha:not([data-size=invisible])", "#FunCaptcha", "[data-pkey]", "#px-captcha", "[id^=px-captcha]", ".geetest_holder", "#captcha-container", "[class*=datadome]", "#ddv1-captcha-container"];
 
 export interface PageFacts {
   url: string;

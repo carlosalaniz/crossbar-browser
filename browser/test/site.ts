@@ -39,6 +39,8 @@ export async function startSite(opts: { host?: string; port?: number } = {}): Pr
       const file = join(import.meta.dirname, "..", "..", fx[1]!, "fixtures", fx[2]!);
       if (existsSync(file)) return send(200, readFileSync(file, "utf8"));
     }
+    // A stand-in for a captcha widget frame (path-shaped like the real one; nothing to solve).
+    if (u.pathname === "/recaptcha/api2/anchor") return send(200, html(`<div class="rc-anchor">I'm not a robot</div>`));
     const st = /^\/status\/(\d{3})$/.exec(u.pathname);
     if (st) return send(Number(st[1]), html(`status ${st[1]}`));
     if (u.pathname.startsWith("/ads/") || u.pathname.startsWith("/tracker/")) {

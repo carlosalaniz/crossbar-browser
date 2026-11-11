@@ -404,7 +404,11 @@ export class AgentSession {
     });
   }
 
+  /** Why the last top-level navigation was refused (a redirect hop to LAN, a blocked site...). */
+  private lastNavRefusal: { url: string; rule: string } | null = null;
+
   private onRequest(tab: Tab, r: GateRequest, verdict: string, rule?: string): void {
+    if (r.resourceType === "Document" && r.sessionId === r.rootSessionId && verdict !== "allow") this.lastNavRefusal = { url: r.url, rule: rule ?? verdict };
     const domain = registrable(hostOf(r.url));
     const isNav = r.resourceType === "Document";
     const nonGet = r.method !== "GET" && r.method !== "HEAD";
@@ -485,8 +489,12 @@ export class AgentSession {
       : { state: "error", message: "Paused." };
   }
 
-  private challenge(block: BlockState, tab: Tab, url: string): ToolResult {
-    const existing = this.s.tickets.listOpen(this.userId).find((x) => x.kind === "challenge" && (x.facts as { sessionId?: string }).sessionId === this.id);
+  private challenge(block: BlockState & { passwordFieldOrigins?: string[] }, tab: Tab, url: string): ToolResult {
+    // Reuse an open ticket only for the same block (same kind, same origin); a different wall gets its own.
+    const existing = this.s.tickets.listOpen(this.userId).find((x) => {
+      const f = x.facts as { sessionId?: string; kind?: string; origin?: string };
+      return x.kind === "challenge" && f.sessionId === this.id && f.kind === block.kind && f.origin === block.origin;
+    });
     const t =
       existing ??
       this.s.tickets.create({ userId: this.userId, tokenId: this.token.id, agentName: this.token.agentName, kind: "challenge", facts: { ...block, url, profile: tab.profile, sessionId: this.id, domain: registrable(hostOf(url)) } });
@@ -495,9 +503,11 @@ export class AgentSession {
     return { state: "blocked", reason, ticket: ticketRef(t), hint: "A person has been asked to handle it. Call wait_for_ticket, then retry." };
   }
 
-  private async checkBlock(tab: Tab): Promise<BlockState | null> {
+  private async checkBlock(tab: Tab): Promise<(BlockState & { passwordFieldOrigins: string[] }) | null> {
     const f = await tab.facts().catch(() => null);
-    return f ? detect(f) : null;
+    const b = f ? detect(f) : null;
+    // The takeover page warns when a password field sits on a different origin from the ticket's.
+    return b ? { ...b, passwordFieldOrigins: f!.passwordFieldOrigins } : null;
   }
 
   private async applySite(tab: Tab, url: string): Promise<void> {
@@ -603,7 +613,13 @@ export class AgentSession {
     if (!this.tainted || this.usedBeforeTaint.has(domain) || profile === "anon") this.used.add(domain);
     this.pageDomain.set(profile, u.hostname);
     // A navigation the agent asked for is pre-approved by open(); the policy still sees it.
+    this.lastNavRefusal = null;
     const nav = await tab.navigate(url);
+    const navError = (nav as { error?: string }).error;
+    if (navError && /BLOCKED_BY_CLIENT/.test(navError) && this.lastNavRefusal) {
+      const { url: where, rule } = this.lastNavRefusal as { url: string; rule: string };
+      return { state: "denied", reason: `The page led to ${hostOf(where) || where}, which agents may not open (${rule}).` };
+    }
     this.s.pacer.record(this.userId, domain);
     await this.afterLoad(tab);
     const block = await this.checkBlock(tab);

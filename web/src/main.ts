@@ -330,7 +330,8 @@ async function ticketScreen(id: string) {
             t.scopes.map((s, i) => act(SCOPE_LABEL[s]?.(t) ?? s, i === 0 ? "primary" : "", () => api("POST", `/api/tickets/${id}/approve`, { scope: s === "apply" ? "once" : s }))),
             act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
           );
-  const f = t.facts as { origin?: string; url?: string; from?: Record<string, unknown>; to?: Record<string, unknown>; kind?: string; evidence?: string[] };
+  const f = t.facts as { origin?: string; url?: string; from?: Record<string, unknown>; to?: Record<string, unknown>; kind?: string; evidence?: string[]; passwordFieldOrigins?: string[] };
+  const foreignPw = t.kind === "challenge" ? (f.passwordFieldOrigins ?? []).filter((o) => o !== f.origin) : [];
   render(
     shell(
       t.kind === "challenge" ? "Needs you" : t.kind === "proposal" ? "Proposal" : "Approval",
@@ -341,7 +342,7 @@ async function ticketScreen(id: string) {
       t.kind === "proposal"
         ? h("dl", { class: "facts" }, Object.keys(f.to ?? {}).filter((k) => k !== "pattern" && (f.to as Record<string, unknown>)[k] !== undefined).map((k) => [h("dt", {}, k), h("dd", {}, `${String(f.from?.[k] ?? "–")} → `, h("strong", {}, String((f.to as Record<string, unknown>)[k])))]))
         : t.kind === "challenge"
-          ? h("div", {}, h("p", {}, f.kind === "login" ? "Log in on your phone. Your password manager can fill the field; the agent sees nothing while you're in control." : "Solve it on your phone. The agent is paused while you're in control."), h("details", {}, h("summary", { class: "small muted" }, "Evidence"), h("ul", { class: "small" }, (f.evidence ?? []).map((e) => h("li", {}, e)))))
+          ? h("div", {}, foreignPw.length ? h("p", { class: "banner danger" }, `The password field on this page belongs to ${foreignPw.join(", ")}, not ${f.origin}. Make sure that's who you mean to log in to.`) : null, h("p", {}, f.kind === "login" ? "Log in on your phone. Your password manager can fill the field; the agent sees nothing while you're in control." : "Solve it on your phone. The agent is paused while you're in control."), h("details", {}, h("summary", { class: "small muted" }, "Evidence"), h("ul", { class: "small" }, (f.evidence ?? []).map((e) => h("li", {}, e)))))
           : factsTable(t),
       t.agentSays ? h("blockquote", { class: "claim" }, h("span", { class: "small muted" }, "Agent says (unverified): "), `“${t.agentSays.text}”`) : null,
       decision,

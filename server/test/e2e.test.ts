@@ -106,4 +106,18 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     const done = await t.api("POST", `/api/tickets/${id}/done`, { user: "alice" });
     assert.equal(done.json.verified, true, JSON.stringify(done.json));
   });
+
+  test("typing is refused on configured extra sign-in providers", async () => {
+    const extra = new LocalPool(localLauncher({ dataDir: dir, hostResolverRules: "MAP *.test 127.0.0.1", headless: true, extraArgs: process.env.CROSSBAR_TEST_NO_SANDBOX === "1" ? ["--no-sandbox"] : [] }), { extraSignInProviders: ["b.test"] });
+    try {
+      const tab = await extra.openTab("idp-user", "anon");
+      tab.setPolicy({ decide: () => "allow" });
+      await tab.navigate(site.url("b.test", "/pages/article"));
+      const page = await tab.extract({ includeLinks: true });
+      const input = page.links!.find((l) => l.kind === "input")!;
+      await assert.rejects(tab.type(input.ref, "hello", false), /sign-in provider/);
+    } finally {
+      await extra.close();
+    }
+  });
 });

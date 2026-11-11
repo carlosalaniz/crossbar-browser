@@ -35,12 +35,17 @@ describe("block signatures on fixtures", { skip: skipReason }, () => {
     ["/pages/login", "login"],
     ["/status/429", "soft_block"],
     ["/pages/article", null],
+    ["/pages/xo-captcha", "captcha"],
+    ["/pages/xo-login", "login"],
     ["/fixture/adapters/reddit/old-reddit-listing.html", null],
   ];
   for (const [path, kind] of cases) {
     test(`${path} → ${kind ?? "no block"}`, async () => {
       await tab.navigate(site.url("a.test", path));
-      const b = detect(await tab.facts());
+      if (path.startsWith("/pages/xo-")) await new Promise((r) => setTimeout(r, 500)); // let the cross-origin frame load
+      const facts = await tab.facts();
+      const b = detect(facts);
+      if (path === "/pages/xo-login") assert.ok(facts.passwordFieldOrigins.some((o) => o.includes("b.test")), JSON.stringify(facts.passwordFieldOrigins));
       assert.equal(b?.kind ?? null, kind, JSON.stringify(b));
     });
   }

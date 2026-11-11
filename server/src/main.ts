@@ -46,12 +46,15 @@ const launcher = env.CROSSBAR_BROWSER_URL
       hostResolverRules: env.CROSSBAR_HOST_RESOLVER_RULES,
       extraArgs: env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : [],
     });
-const pool = new LocalPool(launcher);
+// Extra sign-in providers (comma-separated hosts): blocked for agents by default and typing refused there.
+const signInProviders = (env.CROSSBAR_SIGNIN_PROVIDERS ?? "").split(/[\s,]+/).filter(Boolean);
+const pool = new LocalPool(launcher, { extraSignInProviders: signInProviders });
 const services = buildServices({
   dataDir,
   pool,
   appOrigin,
   adblock: await loadAdblock(),
+  signInProviders,
   pace: { minIntervalMs: env.CROSSBAR_PACE_MS ? Number(env.CROSSBAR_PACE_MS) : undefined, hourlyCap: env.CROSSBAR_HOURLY_CAP ? Number(env.CROSSBAR_HOURLY_CAP) : undefined },
 });
 const auth = new Auth(services.db, { appOrigin, secureCookies: appOrigin.startsWith("https://"), log: (m) => console.log(m) });

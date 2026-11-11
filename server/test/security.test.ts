@@ -458,3 +458,38 @@ describe("taint and subresources", () => {
     assert.ok(flags.some((f) => f.domain === "evil.example"));
   });
 });
+
+describe("detection findings from the test site", () => {
+  test("a different wall in the same session gets its own ticket; the same wall reuses it", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://a.example/login", { facts: { hasPasswordField: true, textLength: 200 } });
+    pool.pages.set("https://b.example/check", { title: "Just a moment...", facts: { textLength: 200 } });
+    const c = await t.mcpClient(t.token("alice"));
+    const one = await c.call("open", { url: "https://a.example/login" });
+    const again = await c.call("open", { url: "https://a.example/login" });
+    const two = await c.call("open", { url: "https://b.example/check" });
+    assert.equal(one.ticket!.id, again.ticket!.id);
+    assert.notEqual(one.ticket!.id, two.ticket!.id);
+    assert.equal((t.services.tickets.get(two.ticket!.id)!.facts as { kind: string }).kind, "captcha");
+  });
+
+  test("a redirect hop to the LAN is reported as denied, with the reason", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    (t.pool as FakePool).pages.set("https://short.example/x", { redirectTo: "http://169.254.169.254/latest/meta-data/" });
+    const c = await t.mcpClient(t.token("alice"));
+    const r = await c.call("open", { url: "https://short.example/x" });
+    assert.equal(r.state, "denied");
+    assert.match(String(r.reason), /169\.254\.169\.254.*site_blocked/);
+  });
+
+  test("extra sign-in providers are blocked for agents by default", async () => {
+    const { Sites } = await import("../src/sites.ts");
+    const { openDb } = await import("../src/db.ts");
+    const sites = new Sites(openDb(":memory:"), [], ["accounts.idp.test"]);
+    assert.equal(sites.resolve("u", "https://accounts.idp.test/login").level, "blocked");
+    assert.equal(sites.resolve("u", "https://idp.test/").level, "read");
+  });
+});

@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Crossbar WebSocket block",
+  "version": "0.0.1",
+  "description": "Blocks WebSocket handshakes, which CDP Fetch cannot intercept (step 1 spike).",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "declarative_net_request": { "rule_resources": [{ "id": "ws", "enabled": true, "path": "rules.json" }] }
+}

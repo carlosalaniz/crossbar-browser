@@ -1,0 +1,38 @@
+{
+  "name": "crossbar",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "auth",
+    "browser",
+    "proxy",
+    "detect",
+    "adapters",
+    "web"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint . && node scripts/check-spdx.mjs",
+    "test": "node --test --test-concurrency=1 \"*/test/**/*.test.ts\"",
+    "test:proxy": "node --test \"proxy/test/**/*.test.ts\"",
+    "test:browser": "node --test --test-concurrency=1 \"browser/test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "dev": "echo 'npm run dev arrives in step 6 (compose stack + local test site)' && exit 1",
+    "pretest": "node scripts/ensure-browser.mjs > /dev/null",
+    "spike": "node browser/spike/matrix.ts"
+  },
+  "devDependencies": {
+    "@puppeteer/browsers": "^3.2.7",
+    "@types/node": "^26.6.6",
+    "devtools-protocol": "^0.0.1740066",
+    "eslint": "^10.14.0",
+    "typescript": "~6.0.0",
+    "typescript-eslint": "^8.72.2"
+  }
+}

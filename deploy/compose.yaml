@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Skeleton (step 0). Images and Dockerfiles arrive in later steps.
+name: crossbar
+
+services:
+  app:
+    image: crossbar/app:dev
+    ports:
+      - "${CROSSBAR_PORT:-8080}:8080"   # the one public port
+    networks: [public, internal]
+    volumes:
+      - app-data:/data                   # SQLite, keys, activity log
+    environment:
+      CROSSBAR_BROWSER_URL: http://browser:9222   # reached only through browser/ pool
+    depends_on: [browser]
+
+  browser:
+    image: crossbar/browser:dev
+    networks: [internal]                 # no route out except the proxy
+    volumes:
+      - profiles:/profiles               # encrypted at rest; key lives in app, not here
+    environment:
+      CROSSBAR_PROXY: http://proxy:3128
+    shm_size: 1gb
+    depends_on: [proxy]
+
+  proxy:
+    image: crossbar/proxy:dev
+    networks: [internal, egress]
+
+networks:
+  public: {}
+  internal:
+    internal: true                       # no external connectivity
+  egress: {}
+
+volumes:
+  app-data: {}
+  profiles: {}

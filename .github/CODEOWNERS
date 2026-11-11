@@ -1,0 +1,11 @@
+# Security core: owner review required (AGENTS.md rule 5).
+# TODO: replace the team below with the owner's GitHub handle or team once the org exists.
+/auth/                      @crossbarhq/owners
+/browser/                   @crossbarhq/owners
+/proxy/                     @crossbarhq/owners
+/server/src/capabilities*   @crossbarhq/owners
+/server/src/tokens*         @crossbarhq/owners
+/shared/                    @crossbarhq/owners
+/docs/decisions/            @crossbarhq/owners
+/docs/threat-model.md       @crossbarhq/owners
+/.github/                   @crossbarhq/owners

@@ -22,6 +22,12 @@ if (!proxy && env.CROSSBAR_ALLOW_NO_PROXY !== "1") {
   process.exit(1);
 }
 const headless = env.CROSSBAR_HEADLESS === "1";
+// Chromium's sandbox is on unless an operator explicitly turns it off (e.g. on a host that can't give the
+// container the namespaces it needs). Off means a compromised renderer isn't contained.
+const sandbox = (env.CROSSBAR_CHROME_SANDBOX ?? "on") !== "off";
+if (!sandbox) console.warn("WARNING: Chromium's sandbox is OFF (CROSSBAR_CHROME_SANDBOX=off). A renderer exploit would run unconfined in this container.");
+const SANDBOX_HELP =
+  "Chromium's sandbox can't start in this container: its seccomp profile blocks the namespaces the sandbox needs. With docker compose, use deploy/browser/seccomp.json (deploy/compose.yaml does). On Harbor, an operator can turn the 'Chromium sandbox' setting off knowingly.";
 
 interface Running {
   b: LaunchedBrowser;
@@ -50,7 +56,11 @@ async function launch(userId: string, profile: string): Promise<Running> {
       "--disable-dev-shm-usage",
       // Chromium resolves nothing itself except the proxy: no DNS channel around it.
       `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${new URL(proxy ?? "http://proxy").hostname}`,
+      ...(sandbox ? [] : ["--no-sandbox"]),
     ],
+  }).catch((e: Error) => {
+    if (/No usable sandbox|zygote|namespace/i.test(e.message)) throw new Error(SANDBOX_HELP);
+    throw e;
   });
   const v = (await b.cdp.send("Browser.getVersion")) as { product: string };
   console.log(`launched ${v.product} for ${userId}/${profile}`);
@@ -82,7 +92,7 @@ const server = http.createServer(async (req, res) => {
       if (r) await (await r).b.close();
       return void res.writeHead(200).end("{}");
     }
-    if (req.method === "GET" && req.url === "/healthz") return void res.writeHead(200).end("ok");
+    if (req.method === "GET" && req.url === "/healthz") return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, sandbox }));
     res.writeHead(404).end();
   } catch (e) {
     res.writeHead(500).end((e as Error).message);

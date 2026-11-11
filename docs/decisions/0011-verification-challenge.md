@@ -17,7 +17,7 @@ After a person approves a payment (an always-ask action), the card issuer may de
 - Unlike `login`, resolving it **never changes the site ladder**.
 - Takeover uses the tab where it appeared (same profile); there's no switch to the personal profile.
 - The verifier passes when the challenge frames are gone.
-- `detect/` recognises it by the frame shapes 3-D Secure uses (`three-ds`, `3d_secure`, `3ds2`, issuer ACS pages), so it doesn't depend on one payment provider's exact URLs.
+- `detect/` recognises it by the frame shapes 3-D Secure uses (`three-ds`, `3d_secure`, issuer ACS hosts and paths), matched on host and path only (never query or fragment), for child frames and for the page itself (the redirect flow). It doesn't depend on one payment provider's exact URLs. Text alone never counts: the challenge text lives inside the bank's frame, and a page that merely mentions 3-D Secure (a FAQ) isn't a wall.
 - Priority: `captcha` > `verification` > `login` > `soft_block` > `consent`.
 
 ## Consequences

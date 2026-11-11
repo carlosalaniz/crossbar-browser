@@ -78,7 +78,6 @@ export const SIGNATURES: Signature[] = [
   { id: "aws-waf", kind: "captcha", vendor: "aws-waf", frames: [/awswaf\.com/i], headers: { "x-amzn-waf-action": /captcha|challenge/i } },
   // 3-D Secure and other step-up checks by a card issuer (ADR 0011). Matched by frame shape, not one provider's URLs.
   { id: "three-d-secure-frame", kind: "verification", vendor: "3ds", anyPage: true, frames: [/three[-_]?d[-_]?s|3d[-_]?secure|\/acs(\/|$)|(^|[./-])acs[.-]/i] },
-  { id: "three-d-secure-text", kind: "verification", vendor: "3ds", maxTextLength: 3000, text: [/\b3-?D Secure\b|verify (this|your) (payment|purchase) with your bank|authenticate (this|your) (payment|purchase)/i] },
   { id: "rate-limited", kind: "soft_block", vendor: "generic", status: [429] },
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
   { id: "reddit-blocked", kind: "soft_block", vendor: "reddit", text: [/You've been blocked by network security|whoa there, pardner/i], maxTextLength: 3000 },
@@ -131,8 +130,9 @@ function matches(sig: Signature, f: PageFactsLike): string[] | null {
     }
   }
   if (sig.frames && widgetCounts) {
-    // Child frames only, matched on host and path: a query or fragment (?case=3ds, #url=…) is page data, not a frame's identity.
-    const children = f.frameUrls.filter((u) => u !== f.url);
+    // Matched on host and path only: a query or fragment (?case=3ds, #url=…) is page data, not a frame's identity.
+    // The top-level page counts too (a 3-D Secure redirect is the page itself).
+    const children = [...new Set([f.url, ...f.frameUrls])];
     const invisible = sig.invisibleMarker && children.some((u) => sig.invisibleMarker!.test(u));
     const hit = invisible ? undefined : children.find((u) => sig.frames!.some((re) => re.test(hostPath(u))));
     if (hit) {

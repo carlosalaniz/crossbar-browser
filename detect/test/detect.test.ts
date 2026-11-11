@@ -52,7 +52,6 @@ test("3-D Secure is a verification, by frame shape or text (ADR 0011)", () => {
   for (const u of ["https://hooks.stripe.com/3d_secure_2/hosted?x=1", "https://js.stripe.com/v3/three-ds-2-challenge-abc.html", "https://acs.examplebank.com/challenge", "https://secure.bank.example/acs?tx=1"]) {
     assert.equal(detect({ ...base, frameUrls: ["https://shop.example/checkout", u] })?.kind, "verification", u);
   }
-  assert.equal(detect({ ...base, textLength: 600, textSample: "Verify this payment with your bank" })?.kind, "verification");
   assert.equal(detect({ ...base, frameUrls: ["https://cdn.example/accessories.png", "https://example.com/access"] }), null);
   // A long checkout with the bank frame still counts; a long article about 3-D Secure doesn't.
   assert.equal(detect({ ...base, textLength: 9000, frameUrls: ["https://acs.examplebank.com/challenge"] })?.kind, "verification");
@@ -76,6 +75,12 @@ describe("frame precision (findings from a live Stripe run)", () => {
     const after = [top, ...invisibleHcaptcha, "https://js.stripe.com/v3/three-ds-2-challenge-77aa.html#intentId=pi_1&hosted=false", "https://testmode-acs.stripe.com/3d_secure_2_test/acct_1/tds2_1/x"];
     assert.equal(detect({ ...stripePage, frameUrls: after })?.kind, "verification");
     assert.equal(detect({ ...stripePage, frameUrls: [top, "https://hooks.stripe.com/3d_secure_2/hosted?merchant=x&payment_intent=pi_1"] })?.kind, "verification");
+  });
+  test("a 3-D Secure redirect is the page itself", () => {
+    assert.equal(detect({ ...base, url: "https://hooks.stripe.com/3d_secure_2/hosted?merchant=x&payment_intent=pi_1", frameUrls: ["https://hooks.stripe.com/3d_secure_2/hosted?merchant=x&payment_intent=pi_1"] })?.kind, "verification");
+  });
+  test("a short page that only mentions 3-D Secure isn't a bank check", () => {
+    assert.equal(detect({ ...base, textLength: 600, textSample: "FAQ: what is 3-D Secure? Verify this payment with your bank when asked." }), null);
   });
   test("'3ds' in the page's own URL or a path segment isn't a bank check", () => {
     assert.equal(detect({ ...base, url: "https://www.nintendo.com/3ds/", frameUrls: ["https://www.nintendo.com/3ds/"] }), null);

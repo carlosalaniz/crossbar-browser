@@ -3,6 +3,8 @@
 // different sites (cross-site iframes become out-of-process). localhost is used where a secure
 // context is required (service workers).
 import http from "node:http";
+import { readFileSync, existsSync } from "node:fs";
+import { join, normalize } from "node:path";
 import type { AddressInfo } from "node:net";
 
 export interface Hit {
@@ -18,7 +20,7 @@ export async function startSite(): Promise<{ port: number; hits: Hit[]; close():
   const hits: Hit[] = [];
   const record = (req: http.IncomingMessage) => {
     const u = new URL(req.url ?? "/", "http://x");
-    hits.push({ method: req.method ?? "", path: u.pathname + u.search, host: req.headers.host ?? "", case: u.searchParams.get("case") });
+    hits.push({ method: req.method ?? "", path: u.pathname + u.search, host: req.headers.host ?? "", case: u.searchParams.get("case") ?? (u.pathname.startsWith("/ads/") || u.pathname.startsWith("/tracker/") ? "ad" : null) });
   };
   let port = 0;
   const server = http.createServer((req, res) => {
@@ -26,6 +28,15 @@ export async function startSite(): Promise<{ port: number; hits: Hit[]; close():
     const send = (status: number, body: string, type = "text/html", extra: Record<string, string> = {}) =>
       res.writeHead(status, { "content-type": type, "access-control-allow-origin": "*", "access-control-allow-methods": "*", "access-control-allow-headers": "*", ...extra }).end(body);
     req.resume();
+    if (u.pathname.startsWith("/pages/")) {
+      const file = normalize(join(import.meta.dirname, "pages", u.pathname.slice(7) + (u.pathname.endsWith(".html") ? "" : ".html")));
+      if (file.startsWith(join(import.meta.dirname, "pages")) && existsSync(file)) return send(200, readFileSync(file, "utf8"));
+      return send(200, html(`page ${u.pathname}`));
+    }
+    if (u.pathname.startsWith("/ads/") || u.pathname.startsWith("/tracker/")) {
+      record(req);
+      return send(200, "", "text/plain");
+    }
     switch (u.pathname) {
       case "/sink":
         record(req);

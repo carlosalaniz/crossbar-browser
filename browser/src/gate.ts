@@ -22,7 +22,12 @@ export interface GateRequest {
   redirectedRequestId?: string;
 }
 
-export type GatePolicy = (r: GateRequest) => Verdict;
+export interface Decision {
+  verdict: Verdict;
+  /** Which rule decided, for the activity log (e.g. "read_list", "blocked_ad", "taint"). */
+  rule?: string;
+}
+export type GatePolicy = (r: GateRequest) => Verdict | Decision;
 
 export interface HeldRequest {
   request: GateRequest;
@@ -37,7 +42,7 @@ export interface NetworkGateOptions {
   /** Held requests fail after this long; the agent retries with the approval id. Default 20 s. */
   holdTimeoutMs?: number;
   onHeld?: (h: HeldRequest) => void;
-  onRequest?: (r: GateRequest, v: Verdict) => void;
+  onRequest?: (r: GateRequest, v: Verdict, rule?: string) => void;
   /** Bypass service workers for page requests (Network.setBypassServiceWorker). */
   bypassServiceWorker?: boolean;
 }
@@ -72,7 +77,7 @@ export interface Attached {
 export class NetworkGate {
   readonly attached = new Map<string, Attached>();
   readonly attachErrors: Array<{ type: string; url: string; step: string; error: string }> = [];
-  readonly seen: Array<{ request: GateRequest; verdict: Verdict }> = [];
+  readonly seen: Array<{ request: GateRequest; verdict: Verdict; rule?: string }> = [];
   private readonly held = new Map<string, HeldRequest>();
   private readonly policy: GatePolicy;
   private readonly holdTimeoutMs: number;
@@ -153,13 +158,18 @@ export class NetworkGate {
       redirectedRequestId: p.redirectedRequestId,
     };
     let verdict: Verdict;
+    let rule: string | undefined;
     try {
-      verdict = this.policy(r);
+      const d = this.policy(r);
+      if (typeof d === "string") verdict = d;
+      else ({ verdict, rule } = d);
     } catch {
       verdict = "deny"; // a policy bug fails closed
+      rule = "policy_error";
     }
-    this.seen.push({ request: r, verdict });
-    this.opts.onRequest?.(r, verdict);
+    this.seen.push({ request: r, verdict, rule });
+    if (this.seen.length > 5000) this.seen.splice(0, 1000);
+    this.opts.onRequest?.(r, verdict, rule);
     const cont = () => this.cdp.send("Fetch.continueRequest", { requestId: r.requestId }, sessionId).catch(() => {});
     const fail = () => this.cdp.send("Fetch.failRequest", { requestId: r.requestId, errorReason: "BlockedByClient" }, sessionId).catch(() => {});
     if (verdict === "allow") return void (await cont());

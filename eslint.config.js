@@ -2,7 +2,7 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["node_modules/", "**/test/pages/**", "**/fixtures/**"] },
+  { ignores: ["node_modules/", ".cache/", "**/test/pages/**", "**/fixtures/**", "**/dist/**"] },
   ...tseslint.configs.recommended,
   {
     rules: {

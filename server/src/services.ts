@@ -21,6 +21,8 @@ export interface BuildOptions {
   appOrigin: string;
   adblock?: AdBlocker;
   selfHosts?: string[];
+  /** Extra sign-in providers: blocked for agents by default, typing refused. Only tightens. */
+  signInProviders?: string[];
   pace?: { minIntervalMs?: number; hourlyCap?: number };
   settleMs?: number;
   fetchImpl?: typeof fetch;
@@ -40,7 +42,7 @@ export function buildServices(o: BuildOptions): Services & { tokens: Tokens } {
   return {
     db,
     keys,
-    sites: new Sites(db, o.selfHosts ?? [new URL(o.appOrigin).hostname]),
+    sites: new Sites(db, o.selfHosts ?? [new URL(o.appOrigin).hostname], o.signInProviders ?? []),
     grants: new Grants(db),
     tickets: new Tickets(db),
     activity: new Activity(db, keys),

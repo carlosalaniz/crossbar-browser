@@ -24,3 +24,15 @@ test("login wall: password field on a short page", () => {
 });
 test("429 is a soft block", () => assert.equal(detect({ ...base, status: 429, textLength: 100 })?.kind, "soft_block"));
 test("captcha outranks login", () => assert.equal(detect({ ...base, hasPasswordField: true, textLength: 300, frameUrls: ["https://www.google.com/recaptcha/api2/bframe"] })?.kind, "captcha"));
+
+test("a widget's container counts on a short page or with a login form", () => {
+  assert.equal(detect({ ...base, textLength: 800, captchaContainers: [".cf-turnstile"] })?.vendor, "cloudflare");
+  assert.equal(detect({ ...base, textLength: 20000, hasPasswordField: true, captchaContainers: [".g-recaptcha"] })?.kind, "captcha");
+});
+test("a reCAPTCHA in a long article's comment form is not a wall", () => {
+  assert.equal(detect({ ...base, textLength: 20000, captchaContainers: [".g-recaptcha"], frameUrls: ["https://www.google.com/recaptcha/api2/anchor?k=x"] }), null);
+});
+test("widget frames are recognised by path, not only by vendor host", () => {
+  assert.equal(detect({ ...base, frameUrls: ["http://captcha.test/recaptcha/api2/anchor?k=x"] })?.vendor, "recaptcha");
+  assert.equal(detect({ ...base, frameUrls: ["http://captcha.test/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2"] })?.vendor, "cloudflare");
+});

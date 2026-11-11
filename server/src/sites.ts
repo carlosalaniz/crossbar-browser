@@ -42,9 +42,12 @@ export class Sites {
   private readonly db: DB;
   /** The app's own host(s), always blocked for agents. */
   private readonly selfHosts: string[];
-  constructor(db: DB, selfHosts: string[] = []) {
+  private readonly blockedByDefault: string[];
+  /** extraBlocked: more hosts blocked by default (e.g. extra sign-in providers). Only tightens. */
+  constructor(db: DB, selfHosts: string[] = [], extraBlocked: string[] = []) {
     this.db = db;
     this.selfHosts = selfHosts.map((h) => h.toLowerCase());
+    this.blockedByDefault = [...DEFAULT_BLOCKED, ...extraBlocked.map((h) => h.toLowerCase())];
   }
 
   list(userId: string): SiteRule[] {
@@ -80,7 +83,7 @@ export class Sites {
     for (const c of candidates) {
       const row = stmt.get(userId, c) as { pattern: string; level: SiteLevel; adblock: number; device: "desktop" | "mobile"; source: SiteRule["source"] } | undefined;
       if (row) return { level: row.level, adblock: !!row.adblock, device: row.device, matched: row.pattern, source: row.source };
-      if (DEFAULT_BLOCKED.includes(c)) return { level: "blocked", adblock: true, device: "desktop", matched: c, source: "default" };
+      if (this.blockedByDefault.includes(c)) return { level: "blocked", adblock: true, device: "desktop", matched: c, source: "default" };
     }
     return { level: "read", adblock: true, device: "desktop", matched: null, source: "default" };
   }

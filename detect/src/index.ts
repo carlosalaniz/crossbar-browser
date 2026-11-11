@@ -20,6 +20,8 @@ export interface PageFactsLike {
   frameUrls: string[];
   hasPasswordField: boolean;
   hasOtpField: boolean;
+  /** Known captcha container selectors present on the page (any frame). */
+  captchaContainers?: string[];
   textLength: number;
   textSample: string;
 }
@@ -30,6 +32,8 @@ export interface Signature {
   vendor: string;
   /** Any of these frame URL patterns present. */
   frames?: RegExp[];
+  /** Any of these container selectors present (as reported by the browser). */
+  containers?: string[];
   /** Response header name -> value pattern. */
   headers?: Record<string, RegExp>;
   status?: number[];
@@ -42,13 +46,13 @@ export interface Signature {
 
 export const SIGNATURES: Signature[] = [
   { id: "cloudflare-challenge-header", kind: "captcha", vendor: "cloudflare", headers: { "cf-mitigated": /challenge/i } },
-  { id: "cloudflare-turnstile", kind: "captcha", vendor: "cloudflare", frames: [/challenges\.cloudflare\.com\//i] },
+  { id: "cloudflare-turnstile", kind: "captcha", vendor: "cloudflare", frames: [/challenges\.cloudflare\.com\//i, /\/cdn-cgi\/challenge-platform\//i], containers: [".cf-turnstile", "[data-sitekey].cf-turnstile"] },
   { id: "cloudflare-interstitial", kind: "captcha", vendor: "cloudflare", text: [/Verify you are human|Checking (if the site connection is secure|your browser)|Just a moment\.\.\./i], maxTextLength: 2000 },
-  { id: "recaptcha", kind: "captcha", vendor: "recaptcha", frames: [/google\.com\/recaptcha\/(api2|enterprise)\/(anchor|bframe)/i, /recaptcha\.net\/recaptcha\//i] },
-  { id: "hcaptcha", kind: "captcha", vendor: "hcaptcha", frames: [/hcaptcha\.com\/captcha/i, /newassets\.hcaptcha\.com/i] },
-  { id: "arkose", kind: "captcha", vendor: "arkose", frames: [/arkoselabs\.com|funcaptcha\.com/i] },
-  { id: "datadome", kind: "captcha", vendor: "datadome", frames: [/captcha-delivery\.com|geo\.captcha-delivery\.com/i], headers: { "x-datadome": /.+/ } },
-  { id: "perimeterx", kind: "captcha", vendor: "perimeterx", text: [/Press & Hold to confirm you are a human/i], frames: [/px-cdn\.net|perimeterx\.net|px-captcha/i] },
+  { id: "recaptcha", kind: "captcha", vendor: "recaptcha", frames: [/\/recaptcha\/(api2|enterprise)\/(anchor|bframe)/i, /recaptcha\.net\/recaptcha\//i], containers: [".g-recaptcha", "#g-recaptcha"] },
+  { id: "hcaptcha", kind: "captcha", vendor: "hcaptcha", frames: [/hcaptcha\.com\/captcha/i, /newassets\.hcaptcha\.com/i, /\/captcha\/v1\/[^/]+\/static\/hcaptcha\.html/i], containers: [".h-captcha"] },
+  { id: "arkose", kind: "captcha", vendor: "arkose", frames: [/arkoselabs\.com|funcaptcha\.com|\/fc\/gc\//i], containers: ["#FunCaptcha", "[data-pkey]"] },
+  { id: "datadome", kind: "captcha", vendor: "datadome", frames: [/captcha-delivery\.com|geo\.captcha-delivery\.com/i], headers: { "x-datadome": /.+/ }, containers: ["[class*=datadome]", "#ddv1-captcha-container"] },
+  { id: "perimeterx", kind: "captcha", vendor: "perimeterx", text: [/Press & Hold to confirm you are a human/i], frames: [/px-cdn\.net|perimeterx\.net|px-captcha/i], containers: ["#px-captcha", "[id^=px-captcha]"] },
   { id: "aws-waf", kind: "captcha", vendor: "aws-waf", frames: [/awswaf\.com/i], headers: { "x-amzn-waf-action": /captcha|challenge/i } },
   { id: "rate-limited", kind: "soft_block", vendor: "generic", status: [429] },
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
@@ -66,8 +70,12 @@ function originOf(url: string): string {
   }
 }
 
+/** A widget on a long page without a login form is part of the page (a comment form), not a wall. */
+export const WIDGET_PAGE_TEXT_LIMIT = 6000;
+
 function matches(sig: Signature, f: PageFactsLike): string[] | null {
   const ev: string[] = [];
+  const widgetCounts = f.textLength <= WIDGET_PAGE_TEXT_LIMIT || f.hasPasswordField;
   if (sig.maxTextLength !== undefined && f.textLength > sig.maxTextLength) return null;
   let any = false;
   if (sig.headers) {
@@ -79,11 +87,18 @@ function matches(sig: Signature, f: PageFactsLike): string[] | null {
       }
     }
   }
-  if (sig.frames) {
+  if (sig.frames && widgetCounts) {
     const hit = f.frameUrls.find((u) => sig.frames!.some((re) => re.test(u)));
     if (hit) {
       any = true;
       ev.push(`frame ${hit.slice(0, 120)}`);
+    }
+  }
+  if (sig.containers && widgetCounts && f.captchaContainers?.length) {
+    const hit = sig.containers.find((c) => f.captchaContainers!.includes(c));
+    if (hit) {
+      any = true;
+      ev.push(`container ${hit}`);
     }
   }
   if (sig.status && f.status !== null && sig.status.includes(f.status)) {

@@ -9,7 +9,7 @@ import { NetworkGate, type Decision, type GateRequest, type HeldRequest, type Ve
 import { launchChrome, type LaunchOptions } from "./launch.ts";
 import { PageScripts, type ExtractParams, type ExtractResult } from "./page-scripts/index.ts";
 import { scrollAndExtract, type ScrollOptions, type ScrollResult } from "./page-scripts/scroll.ts";
-import { typeInto } from "./input-guard.ts";
+import { typeInto, SIGN_IN_PROVIDERS } from "./input-guard.ts";
 
 export type Profile = "anon" | "personal";
 export type DeviceKind = "desktop" | "mobile";
@@ -20,6 +20,9 @@ export interface TabPolicy {
   onRequest?(r: GateRequest, verdict: Verdict, rule?: string): void;
 }
 
+/** Container elements captcha widgets render into (present even before the widget's iframe loads). */
+export const CAPTCHA_CONTAINERS = [".cf-turnstile", "[data-sitekey].cf-turnstile", ".g-recaptcha", "#g-recaptcha", ".h-captcha", "#FunCaptcha", "[data-pkey]", "#px-captcha", "[id^=px-captcha]", ".geetest_holder", "#captcha-container", "[class*=datadome]", "#ddv1-captcha-container"];
+
 export interface PageFacts {
   url: string;
   title: string;
@@ -29,6 +32,7 @@ export interface PageFacts {
   hasPasswordField: boolean;
   passwordFieldOrigins: string[];
   hasOtpField: boolean;
+  captchaContainers: string[];
   textLength: number;
   textSample: string;
 }
@@ -131,6 +135,7 @@ export const DESKTOP = { width: 1280, height: 800, deviceScaleFactor: 1, mobile:
 export const MOBILE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
 
 class ManagedBrowser {
+  signInProviders: string[] = SIGN_IN_PROVIDERS;
   readonly tabsBySession = new Map<string, CdpTab>();
   readonly expected = new Set<string>();
   gate!: NetworkGate;
@@ -342,7 +347,7 @@ class CdpTab implements Tab {
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {
-    await typeInto(this.cdp, this.session, `[data-cb-ref="${ref.replace(/[^\w]/g, "")}"]`, text);
+    await typeInto(this.cdp, this.session, `[data-cb-ref="${ref.replace(/[^\w]/g, "")}"]`, text, { providers: this.b.signInProviders });
     if (submit) {
       const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
       await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: "\r" }, this.session);
@@ -362,26 +367,54 @@ class CdpTab implements Tab {
       for (const c of t.childFrames ?? []) walk(c);
     };
     walk(frameTree);
-    // Out-of-process iframes aren't in this tree; add them from the gate's attachments.
-    for (const a of this.b.gate.attached.values()) if (a.type === "iframe" && this.b.gate.rootOf(a.sessionId) === this.session) frameUrls.push(a.url);
+    // Probe every frame we can reach: password/OTP fields with their origin, known captcha containers.
+    const probe = `(() => {
+      const out = { pw: [], otp: false, containers: [] };
+      const sel = ${JSON.stringify(CAPTCHA_CONTAINERS)};
+      const scan = (doc) => {
+        for (const p of doc.querySelectorAll('input[type=password]')) out.pw.push(p.form && p.form.action ? new URL(p.form.action, doc.location.href).origin : doc.location.origin);
+        if (doc.querySelector('input[autocomplete~="one-time-code"]')) out.otp = true;
+        for (const s of sel) if (doc.querySelector(s)) out.containers.push(s);
+        for (const f of doc.querySelectorAll('iframe, frame')) { try { if (f.contentDocument) scan(f.contentDocument); } catch (e) {} }
+      };
+      scan(document);
+      return out;
+    })()`;
+    type Probe = { pw: string[]; otp: boolean; containers: string[] };
+    const run = async (session: string): Promise<Probe | null> =>
+      ((await this.cdp.send("Runtime.evaluate", { expression: probe, returnByValue: true }, session).catch(() => null))?.result.value as Probe | undefined) ?? null;
+    const probes: Probe[] = [];
+    const main = await run(this.session);
+    if (main) probes.push(main);
+    // Out-of-process (cross-origin) iframes: their own sessions. The URL recorded at attach is usually
+    // blank (the target starts paused), so ask for the current one.
+    for (const a of [...this.b.gate.attached.values()]) {
+      if (a.type !== "iframe" || this.b.gate.rootOf(a.sessionId) !== this.session) continue;
+      const info = await this.cdp.send("Target.getTargetInfo", { targetId: a.targetId }).catch(() => null);
+      const url = info?.targetInfo.url || a.url;
+      if (url) frameUrls.push(url);
+      const sub = await this.cdp.send("Page.getFrameTree", undefined, a.sessionId).catch(() => null);
+      if (sub) walk(sub.frameTree);
+      const p = await run(a.sessionId);
+      if (p) probes.push(p);
+    }
     const r = await this.cdp.send(
       "Runtime.evaluate",
-      {
-        expression: `(() => { const pw = [...document.querySelectorAll('input[type=password]')]; return { title: document.title, pw: pw.length, otp: !!document.querySelector('input[autocomplete~="one-time-code"]'), text: (document.body?.innerText ?? '').slice(0, 4000), len: (document.body?.innerText ?? '').length, pwOrigins: pw.map(p => (p.form?.action ? new URL(p.form.action, location.href).origin : location.origin)) }; })()`,
-        returnByValue: true,
-      },
+      { expression: `({ title: document.title, text: (document.body?.innerText ?? '').slice(0, 4000), len: (document.body?.innerText ?? '').length })`, returnByValue: true },
       this.session,
     );
-    const v = (r.result.value ?? {}) as { title: string; pw: number; otp: boolean; text: string; len: number; pwOrigins: string[] };
+    const v = (r.result.value ?? {}) as { title: string; text: string; len: number };
+    const pwOrigins = probes.flatMap((p) => p.pw);
     return {
       url: frameTree.frame.url,
       title: v.title ?? "",
       status: this.lastDoc.status,
       headers: this.lastDoc.headers,
-      frameUrls,
-      hasPasswordField: (v.pw ?? 0) > 0,
-      passwordFieldOrigins: v.pwOrigins ?? [],
-      hasOtpField: !!v.otp,
+      frameUrls: [...new Set(frameUrls.filter((u) => u && u !== "about:blank"))],
+      hasPasswordField: pwOrigins.length > 0,
+      passwordFieldOrigins: [...new Set(pwOrigins)],
+      hasOtpField: probes.some((p) => p.otp),
+      captchaContainers: [...new Set(probes.flatMap((p) => p.containers))],
       textLength: v.len ?? 0,
       textSample: v.text ?? "",
     };
@@ -477,11 +510,18 @@ class CdpTab implements Tab {
   }
 }
 
+export interface PoolOptions {
+  /** More sign-in providers to refuse agent typing on. Only tightens. */
+  extraSignInProviders?: string[];
+}
+
 export class LocalPool implements BrowserPool {
   private readonly browsers = new Map<string, Promise<ManagedBrowser>>();
   private readonly launcher: Launcher;
-  constructor(launcher: Launcher) {
+  private readonly opts: PoolOptions;
+  constructor(launcher: Launcher, opts: PoolOptions = {}) {
     this.launcher = launcher;
+    this.opts = opts;
   }
 
   private browser(userId: string, profile: Profile): Promise<ManagedBrowser> {
@@ -490,6 +530,7 @@ export class LocalPool implements BrowserPool {
     if (!b) {
       b = (async () => {
         const m = new ManagedBrowser();
+        m.signInProviders = [...SIGN_IN_PROVIDERS, ...(this.opts.extraSignInProviders ?? []).map((h) => h.toLowerCase())];
         await m.start(this.launcher, userId, profile);
         return m;
       })();

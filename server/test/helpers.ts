@@ -17,6 +17,8 @@ export interface FakePage {
   title?: string;
   content?: string;
   facts?: Partial<PageFacts>;
+  /** A redirect hop the navigation takes. */
+  redirectTo?: string;
   /** Request the page sends when this ref is clicked. */
   onClick?: Record<string, Partial<GateRequest>>;
 }
@@ -89,6 +91,14 @@ export class FakeTab implements Tab {
   async navigate(url: string): Promise<NavResult> {
     const e = this.simulate({ url, method: "GET", resourceType: "Document" });
     if (e.verdict !== "allow") return { url: this.url, title: "", status: null, error: `net::ERR_BLOCKED_BY_CLIENT (${e.rule})` } as NavResult;
+    const hop = this.pages.get(url)?.redirectTo;
+    if (hop) {
+      const h = this.simulate({ url: hop, method: "GET", resourceType: "Document", redirectedRequestId: e.req.requestId });
+      if (h.verdict !== "allow") return { url: this.url, title: "", status: null, error: "net::ERR_BLOCKED_BY_CLIENT" } as NavResult;
+      this.history.push(this.url);
+      this.url = hop;
+      return { url: hop, title: this.pages.get(hop)?.title ?? "", status: 200 };
+    }
     this.history.push(this.url);
     this.url = url;
     return { url, title: this.pages.get(url)?.title ?? "", status: 200 };
@@ -116,7 +126,7 @@ export class FakeTab implements Tab {
   }
   async facts(): Promise<PageFacts> {
     const p = this.pages.get(this.url);
-    return { url: this.url, title: p?.title ?? "", status: 200, headers: {}, frameUrls: [], hasPasswordField: false, passwordFieldOrigins: [], hasOtpField: false, textLength: 5000, textSample: p?.content ?? "", ...p?.facts };
+    return { url: this.url, title: p?.title ?? "", status: 200, headers: {}, frameUrls: [], hasPasswordField: false, passwordFieldOrigins: [], hasOtpField: false, captchaContainers: [], textLength: 5000, textSample: p?.content ?? "", ...p?.facts };
   }
   async domTokens() {
     return { classes: [], ids: [], hrefs: [] };

@@ -21,6 +21,8 @@ services:
       CROSSBAR_BROWSER_URL: http://browser:9300   # reached only through browser/ pool
       CROSSBAR_BROWSER_SECRET: ${CROSSBAR_BROWSER_SECRET:?set CROSSBAR_BROWSER_SECRET in deploy/.env}
       CROSSBAR_PACE_MS: ${CROSSBAR_PACE_MS:-}      # `npm run dev` sets 1000
+      # Extra sign-in providers (agents never open or type there). Only tightens. `npm run dev` adds accounts.idp.test.
+      CROSSBAR_SIGNIN_PROVIDERS: ${CROSSBAR_SIGNIN_PROVIDERS:-}
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     depends_on: [browser]

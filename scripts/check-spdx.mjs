@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const roots = ["shared", "server", "auth", "browser", "proxy", "detect", "adapters", "web", "scripts"];
 const exts = [".ts", ".js", ".mjs"];
-const skip = new Set(["node_modules", "pages", "fixtures"]);
+const skip = new Set(["node_modules", "pages", "fixtures", "dist"]);
 const missing = [];
 function walk(dir) {
   for (const name of readdirSync(dir)) {

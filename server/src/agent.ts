@@ -80,6 +80,7 @@ const ticketRef = (t: Ticket) => ({ id: t.id, kind: t.kind, expiresAt: t.expires
 
 interface PendingHold {
   held: HeldRequest;
+  tab: Tab;
   ticketId: string;
   domain: string;
   actionClass: ActionClass;
@@ -248,7 +249,7 @@ export class AgentSession {
     const domain = registrable(hostOf(r.url));
     const cls = (h.rule ?? "write") as ActionClass;
     const requestHash = this.requestHash(r, op);
-    const values = extractValues(r.url, r.postData);
+    const values = extractValues(r.url, r.postData).filter((v) => v.where !== "path" || v.value.length > 40 || (this.tainted && this.readIndex.overlap(v.value) >= 24));
     const fields = values.map((v) => ({
       where: v.where,
       key: v.key,
@@ -293,7 +294,7 @@ export class AgentSession {
           sessionId: this.id,
         },
       });
-    this.pending.set(ticket.id, { held: h, ticketId: ticket.id, domain, actionClass: cls, requestHash });
+    this.pending.set(ticket.id, { held: h, tab, ticketId: ticket.id, domain, actionClass: cls, requestHash });
     this.newHolds.push(ticket.id);
     if (fields.some((f) => f.overlapsSignedInText >= 24)) this.flag(domain, "data read while signed in was about to be sent here", "gate_overlap");
     void h.settled.then((how) => {
@@ -375,11 +376,13 @@ export class AgentSession {
           const cls = (facts.actionClass as ActionClass) ?? "write";
           this.s.grants.use({ userId: this.userId, tokenId: this.token.id, taskKey: this.taskKey, domain: p.domain, actionClass: cls, requestHash: p.requestHash });
           await p.held.release();
+          this.logHeld(p.tab, p.held.request, "approved", cls);
         }
       } else if (t.state === "denied" || t.state === "expired") {
         if (p) {
           this.pending.delete(t.id);
           await p.held.fail();
+          this.logHeld(p.tab, p.held.request, "denied", p.actionClass);
         }
       }
     }
@@ -445,7 +448,7 @@ export class AgentSession {
   private askBeforeNavigation(u: URL, cls: ActionClass, summary: string): ToolResult {
     const domain = registrable(u.hostname);
     const hash = this.requestHash({ method: "GET", url: u.toString() }, null);
-    const values = extractValues(u.toString());
+    const values = extractValues(u.toString()).filter((v) => v.where !== "path" || v.value.length > 40 || (this.tainted && this.readIndex.overlap(v.value) >= 24));
     const fields = values.map((v) => ({ where: v.where, key: v.key, preview: v.value.slice(0, 300), length: v.value.length, typedByAgent: false, overlapsSignedInText: this.tainted ? this.readIndex.overlap(v.value) : 0 }));
     if (fields.some((f) => f.overlapsSignedInText >= 24)) this.flag(domain, "a URL carried text read while signed in", "gate_overlap");
     const existing = this.s.tickets.listOpen(this.userId).find((t) => t.kind === "approval" && t.facts.requestHash === hash && t.tokenId === this.token.id);

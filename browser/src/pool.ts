@@ -39,6 +39,12 @@ export interface NavResult {
   status: number | null;
 }
 
+/** CSS-pixel size of the page the frame shows, so taps can be mapped back. */
+export interface FrameMeta {
+  width: number;
+  height: number;
+}
+
 export interface InputEvent {
   type: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel" | "keyDown" | "keyUp" | "char" | "insertText";
   x?: number;
@@ -67,7 +73,7 @@ export interface Tab {
   domTokens(): Promise<{ classes: string[]; ids: string[]; hrefs: string[] }>;
   applyCosmetics(css: string): Promise<void>;
   emulate(device: DeviceKind): Promise<void>;
-  startScreencast(onFrame: (jpegBase64: string) => void, opts?: { maxWidth?: number; maxHeight?: number; fps?: number }): Promise<void>;
+  startScreencast(onFrame: (jpegBase64: string, meta: FrameMeta) => void, opts?: { maxWidth?: number; maxHeight?: number; fps?: number }): Promise<void>;
   stopScreencast(): Promise<void>;
   /** Takeover input, from a person. Not an agent tool. */
   input(ev: InputEvent): Promise<void>;
@@ -363,7 +369,7 @@ class CdpTab implements Tab {
     }
   }
 
-  async startScreencast(onFrame: (jpeg: string) => void, opts: { maxWidth?: number; maxHeight?: number; fps?: number } = {}): Promise<void> {
+  async startScreencast(onFrame: (jpeg: string, meta: FrameMeta) => void, opts: { maxWidth?: number; maxHeight?: number; fps?: number } = {}): Promise<void> {
     await this.stopScreencast();
     const minGap = 1000 / Math.min(opts.fps ?? 15, 15);
     let last = 0;
@@ -373,8 +379,14 @@ class CdpTab implements Tab {
       const now = Date.now();
       if (now - last < minGap) return;
       last = now;
-      onFrame(p.data);
+      onFrame(p.data, { width: p.metadata.deviceWidth, height: p.metadata.deviceHeight });
     });
+    // Chrome doesn't paint background tabs; without this, no frames arrive.
+    await this.cdp.send("Page.bringToFront", undefined, this.session).catch(() => {});
+    // First frame right away, so a viewer never waits on an idle page.
+    const { cssLayoutViewport } = await this.cdp.send("Page.getLayoutMetrics", undefined, this.session);
+    const first = await this.screenshot().catch(() => null);
+    if (first) onFrame(first, { width: cssLayoutViewport.clientWidth, height: cssLayoutViewport.clientHeight });
     await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.maxWidth ?? 1280, maxHeight: opts.maxHeight ?? 1280, everyNthFrame: 1 }, this.session);
   }
 

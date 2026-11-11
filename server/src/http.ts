@@ -131,17 +131,19 @@ export class SessionRegistry {
 }
 
 /** Live view: one screencast per tab, many viewers. */
+type Frame = { f: string; w: number; h: number };
 class LiveView {
-  private readonly casts = new Map<string, { tab: Tab; viewers: Set<(f: string) => void>; last?: string }>();
-  async subscribe(tab: Tab, onFrame: (f: string) => void): Promise<() => void> {
+  private readonly casts = new Map<string, { tab: Tab; viewers: Set<(f: Frame) => void>; last?: Frame }>();
+  async subscribe(tab: Tab, onFrame: (f: Frame) => void): Promise<() => void> {
     let c = this.casts.get(tab.id);
     if (!c) {
       c = { tab, viewers: new Set() };
       this.casts.set(tab.id, c);
       const cc = c;
-      await tab.startScreencast((f) => {
-        cc.last = f;
-        for (const v of cc.viewers) v(f);
+      await tab.startScreencast((f, meta) => {
+        const frame = { f, w: meta.width, h: meta.height };
+        cc.last = frame;
+        for (const v of cc.viewers) v(frame);
       }, { fps: 15 });
     }
     c.viewers.add(onFrame);
@@ -343,7 +345,7 @@ export function createApp(o: AppOptions) {
       const tab = findTab(c.human!.userId, c.params.tab!);
       if (!tab) throw new HttpError(404, "No such tab.");
       c.res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
-      const unsub = await live.subscribe(tab, (f) => c.res.write(`data: ${f}\n\n`));
+      const unsub = await live.subscribe(tab, (f) => c.res.write(`data: ${JSON.stringify(f)}\n\n`));
       const url = setInterval(() => void tab.currentUrl().then((u) => c.res.write(`event: url\ndata: ${JSON.stringify(u)}\n\n`)).catch(() => {}), 1000);
       c.req.on("close", () => {
         clearInterval(url);

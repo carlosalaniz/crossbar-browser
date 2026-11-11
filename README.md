@@ -50,6 +50,14 @@ docker compose -f deploy/compose.yaml logs app | grep "setup code"
 
 Open http://localhost:8080, enter the setup code and create your account. Put it behind HTTPS (a reverse proxy, Tailscale, or Harbor) before using it from your phone, and set `CROSSBAR_ORIGIN` to that URL.
 
+### Harbor
+
+```sh
+harbor sources add https://github.com/carlosalaniz/crossbar-browser
+```
+
+Read [harbor/README.md](harbor/README.md) first. Harbor can't yet give the browser the namespaces Chromium's sandbox needs, so the browser won't start there until you turn the **Chromium sandbox** setting off, knowingly, or Harbor gains that permission.
+
 ### Development
 
 ```sh

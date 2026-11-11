@@ -30,6 +30,7 @@
   "devDependencies": {
     "@puppeteer/browsers": "^3.2.7",
     "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
     "devtools-protocol": "^0.0.1740066",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",

@@ -529,7 +529,8 @@ export function createApp(o: AppOptions) {
       const result = await h({ req, res, params, query: url.searchParams, body, human: effectiveHuman, token: route.auth === "session" ? null : token, route });
       if (!res.headersSent && !res.writableEnded) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result ?? null));
     } catch (e) {
-      const status = e instanceof HttpError ? e.status : e instanceof TicketError ? 409 : 500;
+      const declared = (e as { status?: unknown }).status;
+      const status = e instanceof HttpError ? e.status : typeof declared === "number" && declared >= 400 && declared < 600 ? declared : e instanceof TicketError ? 409 : 500;
       if (status === 500) console.error(e);
       if (!res.headersSent) res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify({ error: status === 500 ? "Internal error." : (e as Error).message }));
       else res.end();

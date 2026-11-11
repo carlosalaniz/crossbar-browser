@@ -6,7 +6,8 @@
   "type": "module",
   "dependencies": {
     "@ghostery/adblocker": "^2.20.3",
-    "defuddle": "^0.19.6"
+    "defuddle": "^0.19.6",
+    "ws": "^8.22.2"
   },
   "exports": {
     "./*": "./src/*.ts"

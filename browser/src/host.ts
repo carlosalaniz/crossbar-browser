@@ -4,7 +4,7 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { launchChrome, type LaunchedBrowser } from "./launch.ts";
 import { seedPreferences } from "./pool.ts";
@@ -38,12 +38,19 @@ function ok(given: string | undefined): boolean {
 async function launch(userId: string, profile: string): Promise<Running> {
   const dir = join(profilesDir, userId.replace(/[^\w-]/g, "_"), profile === "personal" ? "personal" : "anon");
   mkdirSync(dir, { recursive: true });
+  // This host owns the profiles; a lock left by a crashed Chromium (or an old container) is stale.
+  for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) rmSync(join(dir, f), { force: true });
   seedPreferences(dir);
   const b = await launchChrome({
     userDataDir: dir,
     proxyServer: proxy,
     headless,
-    extraArgs: [...(env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : []), "--disable-dev-shm-usage"],
+    extraArgs: [
+      ...(env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : []),
+      "--disable-dev-shm-usage",
+      // Chromium resolves nothing itself except the proxy: no DNS channel around it.
+      `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${new URL(proxy ?? "http://proxy").hostname}`,
+    ],
   });
   const v = (await b.cdp.send("Browser.getVersion")) as { product: string };
   console.log(`launched ${v.product} for ${userId}/${profile}`);

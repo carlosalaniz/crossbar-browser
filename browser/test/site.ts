@@ -16,7 +16,7 @@ export interface Hit {
 
 const html = (body: string) => `<!doctype html><meta charset=utf-8><body>${body}</body>`;
 
-export async function startSite(): Promise<{ port: number; hits: Hit[]; close(): Promise<void>; url(host: string, path: string): string }> {
+export async function startSite(opts: { host?: string; port?: number } = {}): Promise<{ port: number; hits: Hit[]; close(): Promise<void>; url(host: string, path: string): string }> {
   const hits: Hit[] = [];
   const record = (req: http.IncomingMessage) => {
     const u = new URL(req.url ?? "/", "http://x");
@@ -33,6 +33,14 @@ export async function startSite(): Promise<{ port: number; hits: Hit[]; close():
       if (file.startsWith(join(import.meta.dirname, "pages")) && existsSync(file)) return send(200, readFileSync(file, "utf8"));
       return send(200, html(`page ${u.pathname}`));
     }
+    // Saved fixtures from other modules: /fixture/<module>/<file>, e.g. /fixture/detect/consent-wall.html
+    const fx = /^\/fixture\/(detect|adapters\/\w+)\/([\w.-]+\.html)$/.exec(u.pathname);
+    if (fx) {
+      const file = join(import.meta.dirname, "..", "..", fx[1]!, "fixtures", fx[2]!);
+      if (existsSync(file)) return send(200, readFileSync(file, "utf8"));
+    }
+    const st = /^\/status\/(\d{3})$/.exec(u.pathname);
+    if (st) return send(Number(st[1]), html(`status ${st[1]}`));
     if (u.pathname.startsWith("/ads/") || u.pathname.startsWith("/tracker/")) {
       record(req);
       return send(200, "", "text/plain");
@@ -84,7 +92,7 @@ export async function startSite(): Promise<{ port: number; hits: Hit[]; close():
     record(req);
     socket.destroy();
   });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  await new Promise<void>((r) => server.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
   return {
     port,

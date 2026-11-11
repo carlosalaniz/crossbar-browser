@@ -24,6 +24,8 @@ export interface EgressProxyOptions extends AddressPolicyOptions {
   resolve?: Resolver;
   connect?: Connector;
   allowedPorts?: number[];
+  /** Development only: these exact hostnames skip the private-address check (any port). */
+  devAllowPrivateHosts?: string[];
   onDecision?: (d: ProxyDecision) => void;
 }
 
@@ -47,11 +49,13 @@ export function createEgressProxy(opts: EgressProxyOptions = {}): http.Server {
   const resolve = opts.resolve ?? defaultResolve;
   const connect = opts.connect ?? defaultConnect;
   const ports = new Set(opts.allowedPorts ?? [80, 443]);
+  const devAllow = new Set((opts.devAllowPrivateHosts ?? []).map((h) => h.toLowerCase()));
 
   async function decide(rawHost: string, port: number): Promise<Target> {
     const host = normaliseHost(rawHost);
     if (!host) return { ok: false, reason: "bad-host", addresses: [] };
-    if (!ports.has(port)) return { ok: false, reason: `port-${port}-not-allowed`, addresses: [] };
+    const dev = devAllow.has(host);
+    if (!ports.has(port) && !dev) return { ok: false, reason: `port-${port}-not-allowed`, addresses: [] };
     let addresses: string[];
     if (net.isIP(host)) addresses = [host];
     else {
@@ -64,6 +68,7 @@ export function createEgressProxy(opts: EgressProxyOptions = {}): http.Server {
     if (addresses.length === 0) return { ok: false, reason: "dns-empty", addresses };
     // Every answer must pass; a mixed answer is treated as an attack.
     for (const a of addresses) {
+      if (dev) break;
       const v = checkAddress(a, opts);
       if (!v.allowed) return { ok: false, reason: `${v.reason}:${a}`, addresses };
     }

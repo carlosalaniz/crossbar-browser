@@ -2,17 +2,26 @@
 
 Read this, then `AGENTS.md`, at the start of a new build session. It records where the project stands and what to do first. Update the **Status** section at the end of each session.
 
-## Status (11 Nov 2026)
+## Status (11 Nov 2026, end of first build session)
 
-- **Step 0 done. Step 1 spike done.** Repo: https://github.com/carlosalaniz/crossbar-browser (public).
-- **Working mode (owner's decision, 11 Nov 2026):** agents build autonomously in one PR per step. CI must pass and the agent posts a written self-review, then merges, security core included. The owner reviews `auth/`, `browser/` and `proxy/` after the fact; PR bodies flag security-core changes.
-- `npm ci && npm run check` passes: typecheck, lint, SPDX check, 97 tests (`proxy/` table and integration tests; `browser/` tests in a real Chrome for Testing 157 against local pages). `npm test` installs the pinned Chrome for Testing into `.cache/browsers` on first run.
-- `npm run spike` prints what CDP `Fetch` catches, per request path.
-- Spike results: `Fetch` with recursive auto-attach caught every non-GET path tried (fetch, XHR, form, popup form, beacon, `<a ping>`, keepalive, CORS preflight and the request after it, cross-site iframe, dedicated/shared/service workers, SW passthrough, every 307 hop). It does **not** see WebSockets; neither does `Network.setBlockedURLs`. A DNR extension blocks them (ADR 0010, which also means no branded Chrome). CDP client: in-house (ADR 0009). Both ADRs are **Proposed**, awaiting owner review.
-- Not verified yet: WebRTC UDP leak (flag set, no UDP test), the proxy in front of a real Chromium (proxy tested alone; browser tests run without it), headful mode (tests run `--headless=new`; set `CROSSBAR_HEADFUL=1`).
-- `charter.html` was listed here but never existed in the folder; the design pages are read from the artifacts below.
-- Open: CODEOWNERS uses a placeholder team `@crossbarhq/owners`; CLA text not written; Vitest for `web/` not set up yet (step 5); 9 moderate `npm audit` advisories in lint-only dev dependencies.
-- Next: step 2 (page scripts).
+- **Steps 0–6 are built.** Repo: https://github.com/carlosalaniz/crossbar-browser (public). One PR per step (#1 merged; #2–#5 stacked, merged as CI allows).
+- **Working mode (owner's decision, 11 Nov 2026):** agents build autonomously in one PR per step. CI must pass and the agent posts a written self-review, then merges, security core included. The owner reviews `auth/`, `browser/` and `proxy/` after the fact; PR bodies flag security-core changes. Commits carry only the owner as author.
+- `npm ci && npm run check` passes: typecheck, lint, SPDX, ~180 node tests (proxy, browser in a real Chrome for Testing, server with a fake browser and end to end, auth, detect, adapters, a UI flow driven in a browser), Vitest for `web/`, web build.
+- `npm run dev` brings up app, browser (headful Chromium under Xvfb, sandboxed), proxy and a local test site at http://testsite.test:8090. `npm run dev:local` does the same without Docker.
+- `node scripts/stack-smoke.ts <setup-code>` checks a running stack. `node scripts/agent-smoke.ts` lets a real model (OpenRouter key in `.env`, never committed) drive Crossbar over MCP: comment held → approved; private page asks; taint exit with 90 chars of overlap held → denied.
+- Decisions added this session: ADR 0009 (in-house CDP client), ADR 0010 (WebSocket block via DNR, Chromium/CfT only). Both **Proposed** pending owner review.
+- **Open:**
+  - CODEOWNERS uses a placeholder team `@crossbarhq/owners`.
+  - The CLA text isn't written.
+  - The Harbor manifest is a draft (`deploy/harbor/crossbar.yaml`): Harbor's schema isn't in this repo.
+  - Passkeys are tested only up to options/rejection (needs a virtual authenticator test).
+  - The taint subresource gap (see the threat model).
+  - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
+- **Next:**
+  - proxy-side taint for subresources;
+  - virtual-authenticator passkey test;
+  - real Reddit fixtures via a manual refresh script;
+  - accuracy and prompt-rate measurements against real sessions.
 - Design sources:
   - Charter: https://claude.ai/artifact/WBcaHfYYPBjRNq2zX4qQfL (read with the Artifact tool, `action: read`)
   - Access Model: https://claude.ai/artifact/JrJrT21wE7F5TXJbHNEzq1

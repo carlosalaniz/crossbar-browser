@@ -62,6 +62,8 @@ export class Sites {
     if (isIP(bare) && /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|0\.|::1$|f[cd]|fe[89ab])/i.test(bare)) {
       return { level: "blocked", adblock: true, device: "desktop", matched: "private", source: "default" };
     }
+    // Single-label names (app, router, nas) are intranet hosts.
+    if (!isIP(bare) && !host.includes(".")) return { level: "blocked", adblock: true, device: "desktop", matched: "lan", source: "default" };
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan") || host.endsWith(".home.arpa")) {
       return { level: "blocked", adblock: true, device: "desktop", matched: "lan", source: "default" };
     }

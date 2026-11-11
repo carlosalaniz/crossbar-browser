@@ -111,6 +111,13 @@ export function seedPreferences(userDataDir: string): void {
       credentials_enable_service: false,
       download: { prompt_for_download: false, default_directory: "/dev/null" },
       safebrowsing: { enabled: false },
+      // No default search engine (nothing to preconnect to) and no network prediction.
+      default_search_provider: { enabled: false },
+      net: { network_prediction_options: 2 },
+      search: { suggest_enabled: false },
+      alternate_error_pages: { enabled: false },
+      translate: { enabled: false },
+      spellcheck: { use_spelling_service: false },
     }),
   );
 }

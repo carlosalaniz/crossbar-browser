@@ -1,32 +1,60 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Skeleton (step 0). Images and Dockerfiles arrive in later steps.
+# Three containers, one public port (ADR 0008).
+# Set CROSSBAR_BROWSER_SECRET (any random string, 32+ chars) and CROSSBAR_ORIGIN in deploy/.env.
 name: crossbar
+
+x-build: &build
+  context: ..
+  dockerfile: deploy/Dockerfile
 
 services:
   app:
-    image: crossbar/app:dev
+    build: { <<: *build, target: app }
+    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/app:${CROSSBAR_VERSION:-dev}
     ports:
       - "${CROSSBAR_PORT:-8080}:8080"   # the one public port
     networks: [public, internal]
     volumes:
       - app-data:/data                   # SQLite, keys, activity log
     environment:
-      CROSSBAR_BROWSER_URL: http://browser:9222   # reached only through browser/ pool
+      CROSSBAR_ORIGIN: ${CROSSBAR_ORIGIN:-http://localhost:8080}
+      CROSSBAR_BROWSER_URL: http://browser:9300   # reached only through browser/ pool
+      CROSSBAR_BROWSER_SECRET: ${CROSSBAR_BROWSER_SECRET:?set CROSSBAR_BROWSER_SECRET in deploy/.env}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     depends_on: [browser]
+    restart: unless-stopped
 
   browser:
-    image: crossbar/browser:dev
+    build: { <<: *build, target: browser }
+    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/browser:${CROSSBAR_VERSION:-dev}
     networks: [internal]                 # no route out except the proxy
     volumes:
-      - profiles:/profiles               # encrypted at rest; key lives in app, not here
+      - profiles:/profiles
     environment:
       CROSSBAR_PROXY: http://proxy:3128
+      CROSSBAR_BROWSER_SECRET: ${CROSSBAR_BROWSER_SECRET:?set CROSSBAR_BROWSER_SECRET in deploy/.env}
+      CROSSBAR_CHROME_ARGS: ${CROSSBAR_CHROME_ARGS:-}
     shm_size: 1gb
+    # Chromium's sandbox needs user, PID and network namespaces, which Docker's default seccomp
+    # profile forbids. This profile is Docker's default plus exactly clone/unshare/setns.
+    cap_drop: [ALL]
+    security_opt:
+      - seccomp=./browser/seccomp.json
+      - no-new-privileges:true
     depends_on: [proxy]
+    restart: unless-stopped
 
   proxy:
-    image: crossbar/proxy:dev
+    build: { <<: *build, target: proxy }
+    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/proxy:${CROSSBAR_VERSION:-dev}
     networks: [internal, egress]
+    environment:
+      # Your home's public IP(s), so pages can't reach your router from outside.
+      CROSSBAR_BLOCK_IPS: ${CROSSBAR_BLOCK_IPS:-}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
 
 networks:
   public: {}

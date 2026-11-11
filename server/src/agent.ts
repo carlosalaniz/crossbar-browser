@@ -37,6 +37,18 @@ export interface Services {
 const SENSITIVE_PATH = /\/(message|messages|chat|inbox|settings|billing|account\/(billing|payment)|payments?|wallet|subscriptions?)(\/|$|\?)/i;
 const LONG_SEGMENT = 40;
 
+/** Global sensitive paths plus the site adapter's own. */
+export function isSensitive(url: string): boolean {
+  let path = "";
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  if (SENSITIVE_PATH.test(path + "/")) return true;
+  return !!adapterFor(url)?.sensitivePaths?.some((re) => re.test(path));
+}
+
 /** Classify a held request's consequence from what the browser observed (never from button labels). */
 export function classify(method: string, url: string, body?: string, operation?: string | null): ActionClass {
   const hay = `${url} ${operation ?? ""}`.toLowerCase();
@@ -220,7 +232,7 @@ export class AgentSession {
         if (this.useGrant(domain, "taint_exit", this.requestHash(r, null))) return { verdict: "allow", rule: "grant:taint_exit" };
         return { verdict: "hold", rule: "taint_exit" };
       }
-      if (tab.profile === "personal" && SENSITIVE_PATH.test(new URL(r.url).pathname + "/")) {
+      if (tab.profile === "personal" && isSensitive(r.url)) {
         if (this.useGrant(domain, "sensitive_path", this.requestHash(r, null))) return { verdict: "allow", rule: "grant:sensitive_path" };
         return { verdict: "hold", rule: "sensitive_path" };
       }
@@ -256,7 +268,8 @@ export class AgentSession {
       preview: v.value.slice(0, 300),
       length: v.value.length,
       typedByAgent: this.typed.some((t) => t.length >= 3 && v.value.includes(t)),
-      overlapsSignedInText: this.tainted ? this.readIndex.overlap(v.value) : 0,
+      // Overlap only matters when data leaves for a domain the session hadn't used before the taint.
+      overlapsSignedInText: this.tainted && cls === "taint_exit" ? this.readIndex.overlap(v.value) : 0,
     }));
     let origin = "";
     let path = "";
@@ -461,7 +474,29 @@ export class AgentSession {
         kind: "approval",
         facts: { type: "navigation", method: "GET", origin: u.origin, path: u.pathname, domain, actionClass: cls, alwaysAsks: ALWAYS_ASK.has(cls), fields, tainted: this.tainted, taintSource: this.taintSource, requestHash: hash, sessionId: this.id },
       });
-    if (!existing) this.s.notifier.ticket(t);
+    if (!existing) {
+      this.s.notifier.ticket(t);
+      const overlap = Math.max(0, ...fields.map((f) => f.overlapsSignedInText));
+      this.s.activity.log({
+        userId: this.userId,
+        tokenId: this.token.id,
+        agentName: this.token.agentName,
+        sessionId: this.id,
+        profile: this.tainted ? "personal" : null,
+        initiator: "agent",
+        method: "GET",
+        url: u.toString(),
+        novelty: this.used.has(domain) ? "seen" : "new_to_session",
+        shapes: shapesOf(this.s.keys, u.toString()),
+        tainted: this.tainted,
+        taintSource: this.taintSource,
+        overlapChars: overlap,
+        outcome: "held",
+        rule: cls,
+        flagged: overlap >= 24,
+        values: overlap >= 24 ? Object.fromEntries(values.map((v) => [`${v.where}:${v.key}`, v.value.slice(0, 2000)])) : null,
+      });
+    }
     return { state: "pending_approval", ticket: ticketRef(t), summary, hint: "Call wait_for_ticket, then call open again with the same URL." };
   }
 
@@ -492,7 +527,7 @@ export class AgentSession {
       // Plain link after taint, or approved: anonymous profile.
       profile = "anon";
     }
-    if (profile === "personal" && SENSITIVE_PATH.test(u.pathname + "/") && !this.peekGrant(domain, "sensitive_path", this.requestHash({ method: "GET", url }, null))) {
+    if (profile === "personal" && isSensitive(url) && !this.peekGrant(domain, "sensitive_path", this.requestHash({ method: "GET", url }, null))) {
       return this.askBeforeNavigation(u, "sensitive_path", `${u.pathname} on ${domain} is a private page on a signed-in site. A person has to approve each time.`);
     }
     const wait = this.s.pacer.check(this.userId, domain);

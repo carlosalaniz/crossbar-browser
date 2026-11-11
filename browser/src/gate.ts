@@ -18,6 +18,10 @@ export interface GateRequest {
   resourceType: Protocol.Network.ResourceType;
   frameId: string;
   hasPostData: boolean;
+  /** Request body when Chrome includes it (small bodies). Used for approval facts and data shapes. */
+  postData?: string;
+  /** Session of the top-level page this request belongs to (iframes and dedicated workers roll up to it). */
+  rootSessionId: string;
   /** Set when this pause is a redirect hop of an earlier request. */
   redirectedRequestId?: string;
 }
@@ -31,6 +35,8 @@ export type GatePolicy = (r: GateRequest) => Verdict | Decision;
 
 export interface HeldRequest {
   request: GateRequest;
+  /** The rule that decided to hold it (the action class, for the server's policy). */
+  rule?: string;
   release(): Promise<void>;
   fail(): Promise<void>;
   /** Resolves with how the hold ended. */
@@ -43,6 +49,7 @@ export interface NetworkGateOptions {
   holdTimeoutMs?: number;
   onHeld?: (h: HeldRequest) => void;
   onRequest?: (r: GateRequest, v: Verdict, rule?: string) => void;
+  onAttach?: (t: Attached) => void;
   /** Bypass service workers for page requests (Network.setBypassServiceWorker). */
   bypassServiceWorker?: boolean;
 }
@@ -69,6 +76,8 @@ export const holdNonGet: GatePolicy = (r) => (SAFE_METHODS.has(r.method) ? "allo
 
 export interface Attached {
   sessionId: string;
+  parentSessionId?: string;
+  openerId?: string;
   targetId: string;
   type: string;
   url: string;
@@ -95,7 +104,7 @@ export class NetworkGate {
 
   async start(): Promise<void> {
     this.offs.push(
-      this.cdp.on("Target.attachedToTarget", (p) => void this.onAttached(p)),
+      this.cdp.on("Target.attachedToTarget", (p, parent) => void this.onAttached(p, parent)),
       this.cdp.on("Target.detachedFromTarget", (p) => {
         this.attached.delete(p.sessionId);
       }),
@@ -113,10 +122,22 @@ export class NetworkGate {
     return [...this.held.values()];
   }
 
-  private async onAttached(p: Protocol.Target.AttachedToTargetEvent): Promise<void> {
+  /** The top-level page session above this one (itself if it is a page or has no parent). */
+  rootOf(sessionId: string): string {
+    let cur = sessionId;
+    for (let i = 0; i < 20; i++) {
+      const a = this.attached.get(cur);
+      if (!a?.parentSessionId) return cur;
+      cur = a.parentSessionId;
+    }
+    return cur;
+  }
+
+  private async onAttached(p: Protocol.Target.AttachedToTargetEvent, parentSessionId?: string): Promise<void> {
     const { sessionId, targetInfo } = p;
-    const t: Attached = { sessionId, targetId: targetInfo.targetId, type: targetInfo.type, url: targetInfo.url };
+    const t: Attached = { sessionId, parentSessionId, openerId: targetInfo.openerId, targetId: targetInfo.targetId, type: targetInfo.type, url: targetInfo.url };
     this.attached.set(sessionId, t);
+    this.opts.onAttach?.(t);
     // Every step has a deadline: a CDP call that never answers would leave the target paused forever
     // (seen in the spike: Network.enable on a service worker never returned).
     const step = async (name: string, fn: () => Promise<unknown>): Promise<boolean> => {
@@ -155,6 +176,8 @@ export class NetworkGate {
       resourceType: p.resourceType,
       frameId: p.frameId,
       hasPostData: !!p.request.hasPostData,
+      postData: p.request.postData ?? p.request.postDataEntries?.map((e) => (e.bytes ? Buffer.from(e.bytes, "base64").toString("utf8") : "")).join(""),
+      rootSessionId: this.rootOf(sessionId),
       redirectedRequestId: p.redirectedRequestId,
     };
     let verdict: Verdict;
@@ -188,7 +211,7 @@ export class NetworkGate {
       settle(how);
     };
     const timer = setTimeout(() => void finish("timeout"), this.holdTimeoutMs);
-    const h: HeldRequest = { request: r, release: () => finish("released"), fail: () => finish("failed"), settled };
+    const h: HeldRequest = { request: r, rule, release: () => finish("released"), fail: () => finish("failed"), settled };
     this.held.set(key, h);
     this.opts.onHeld?.(h);
   }

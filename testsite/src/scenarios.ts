@@ -11,7 +11,8 @@ import { readFileSync } from "node:fs";
  * - never            Not possible: the tool refuses (credential fields, sign-in providers, downloads)
  * - blocked          The site ladder or the proxy refuses it; no ticket (LAN, private ranges)
  * - blocked:<kind>   The agent gets {state:"blocked", reason, ticket}; kind is BlockState.kind.
- *                    ADR 0001 renamed `needs_human` to `blocked`; kinds are captcha | login | consent | soft_block.
+ *                    ADR 0001 renamed `needs_human` to `blocked`; kinds are captcha | verification | login | consent |
+ *                    soft_block (verification: ADR 0011).
  */
 export const OUTCOMES = [
   "read",
@@ -21,6 +22,7 @@ export const OUTCOMES = [
   "never",
   "blocked",
   "blocked:captcha",
+  "blocked:verification",
   "blocked:login",
   "blocked:consent",
   "blocked:soft_block",

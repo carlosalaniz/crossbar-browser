@@ -11,12 +11,11 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
 - `npm run dev` brings up app, browser (headful Chromium under Xvfb, sandboxed), a `proxy-dev` proxy and the test site (`testsite/`, `dev` compose profile, internal network only). `npm run dev:local` does the same without Docker.
 - **Test site** (`testsite/README.md`): site-a/b/c.test, exfil.test, tracker.test, accounts.idp.test, captcha.test, plus testsite.test for the browser/ pages. `testsite/scenarios.json` is the single source of expected outcomes. The proxy's dev-only allowlist (`CROSSBAR_DEV_TESTSITE=1`) pins those names to the test site and refuses to start in a production build. `node scripts/testsite-smoke.ts <setup-code>` compares a running stack with scenarios.json. Stripe scenarios are live-only (`testsite/.env`, `npm run testsite:stripe:seed`).
 - `node scripts/stack-smoke.ts <setup-code>` checks a running stack. `node scripts/agent-smoke.ts` lets a real model (OpenRouter key in `.env`, never committed) drive Crossbar over MCP: comment held → approved; private page asks; taint exit with 90 chars of overlap held → denied.
-- Decisions added this session: ADR 0009 (in-house CDP client), ADR 0010 (WebSocket block via DNR, Chromium/CfT only). Both **Proposed** pending owner review.
+- Decisions added this session: ADR 0009 (in-house CDP client), ADR 0010 (WebSocket block via DNR, Chromium/CfT only), both **Proposed** pending owner review; ADR 0011 (`verification` challenge kind for 3-D Secure).
 - **Open:**
   - The CLA text isn't written.
   - Harbor package in `harbor/` (git source) passes Harbor's `validatePackageFolder`. Harbor can't yet give the browser its sandbox; the operator must turn the "Chromium sandbox" setting off knowingly, or Harbor adds a permission that renders `deploy/browser/seccomp.json` (proposed to the Harbor session; needs the owner's decision).
   - Short or paraphrased leaks in subresource URLs after taint still pass (see the threat model).
-  - No `BlockState` kind for a 3D Secure bank challenge.
   - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
 - **Next:**
   - real Reddit fixtures via a manual refresh script;

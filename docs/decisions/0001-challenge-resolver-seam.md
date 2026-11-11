@@ -1,6 +1,6 @@
 # 0001: Challenge resolver seam
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0011](0011-verification-challenge.md) (adds `kind: "verification"`)
 - **Date:** 2026-11-11
 
 ## Context

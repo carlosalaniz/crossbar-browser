@@ -2,7 +2,7 @@
 // Block detection (ADR 0001): page facts -> BlockState. Signatures are data; no side effects.
 // v1 uses known signatures only; an LLM or vision fallback comes after v1.
 
-export type BlockKind = "captcha" | "login" | "consent" | "soft_block";
+export type BlockKind = "captcha" | "verification" | "login" | "consent" | "soft_block";
 
 export interface BlockState {
   kind: BlockKind;
@@ -34,6 +34,8 @@ export interface Signature {
   frames?: RegExp[];
   /** Any of these container selectors present (as reported by the browser). */
   containers?: string[];
+  /** Frame and container evidence counts on any page, not only short ones (a 3-D Secure frame on a long checkout). */
+  anyPage?: boolean;
   /** Response header name -> value pattern. */
   headers?: Record<string, RegExp>;
   status?: number[];
@@ -54,6 +56,9 @@ export const SIGNATURES: Signature[] = [
   { id: "datadome", kind: "captcha", vendor: "datadome", frames: [/captcha-delivery\.com|geo\.captcha-delivery\.com/i], headers: { "x-datadome": /.+/ }, containers: ["[class*=datadome]", "#ddv1-captcha-container"] },
   { id: "perimeterx", kind: "captcha", vendor: "perimeterx", text: [/Press & Hold to confirm you are a human/i], frames: [/px-cdn\.net|perimeterx\.net|px-captcha/i], containers: ["#px-captcha", "[id^=px-captcha]"] },
   { id: "aws-waf", kind: "captcha", vendor: "aws-waf", frames: [/awswaf\.com/i], headers: { "x-amzn-waf-action": /captcha|challenge/i } },
+  // 3-D Secure and other step-up checks by a card issuer (ADR 0011). Matched by frame shape, not one provider's URLs.
+  { id: "three-d-secure-frame", kind: "verification", vendor: "3ds", anyPage: true, frames: [/three[-_]?d[-_]?s|3d[-_]?secure|\b3ds2?\b|\/acs(\/|$|\?)|[./-]acs[.-]/i] },
+  { id: "three-d-secure-text", kind: "verification", vendor: "3ds", maxTextLength: 3000, text: [/\b3-?D Secure\b|verify (this|your) (payment|purchase) with your bank|authenticate (this|your) (payment|purchase)/i] },
   { id: "rate-limited", kind: "soft_block", vendor: "generic", status: [429] },
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
   { id: "reddit-blocked", kind: "soft_block", vendor: "reddit", text: [/You've been blocked by network security|whoa there, pardner/i], maxTextLength: 3000 },
@@ -84,7 +89,7 @@ export const WIDGET_PAGE_TEXT_LIMIT = 6000;
 
 function matches(sig: Signature, f: PageFactsLike): string[] | null {
   const ev: string[] = [];
-  const widgetCounts = f.textLength <= WIDGET_PAGE_TEXT_LIMIT || f.hasPasswordField;
+  const widgetCounts = sig.anyPage || f.textLength <= WIDGET_PAGE_TEXT_LIMIT || f.hasPasswordField;
   if (sig.maxTextLength !== undefined && f.textLength > sig.maxTextLength) return null;
   let any = false;
   if (sig.headers) {
@@ -129,7 +134,7 @@ function matches(sig: Signature, f: PageFactsLike): string[] | null {
   return any ? ev : null;
 }
 
-const PRIORITY: Record<BlockKind, number> = { captcha: 0, login: 1, soft_block: 2, consent: 3 };
+const PRIORITY: Record<BlockKind, number> = { captcha: 0, verification: 1, login: 2, soft_block: 3, consent: 4 };
 
 /** The most important block on the page, or null. */
 export function detect(f: PageFactsLike, signatures: Signature[] = SIGNATURES): BlockState | null {

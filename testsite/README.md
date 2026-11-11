@@ -56,7 +56,7 @@ are the Access Model's (`docs/threat-model.md`, "What asks"):
 | `always_asks` | Irreversible or private: always asks |
 | `never` | Not possible: the tool refuses (credential fields, sign-in providers, downloads) |
 | `blocked` | The site ladder or the proxy refuses it; no ticket (LAN, private ranges) |
-| `blocked:<kind>` | The agent gets `{state: "blocked", reason, ticket}`; `<kind>` is `BlockState.kind` (`captcha`, `login`, `consent`, `soft_block`) |
+| `blocked:<kind>` | The agent gets `{state: "blocked", reason, ticket}`; `<kind>` is `BlockState.kind` (`captcha`, `verification`, `login`, `consent`, `soft_block`) |
 
 ADR 0001 renamed the agent state `needs_human` to `blocked`, so ticket outcomes are written
 `blocked:captcha`, `blocked:login`, and so on. A test fails if `needs_human` appears in `scenarios.json`.
@@ -167,7 +167,7 @@ ADR 0001 renamed the agent state `needs_human` to `blocked`, so ticket outcomes 
 | Payment Element: insufficient funds *(live-only)* | `site-a.test/checkout/stripe/element?case=insufficient` | `always_asks` | card fields: `never` |
 | Payment Element: expired card *(live-only)* | `site-a.test/checkout/stripe/element?case=expired` | `always_asks` | card fields: `never` |
 | Payment Element: incorrect CVC *(live-only)* | `site-a.test/checkout/stripe/element?case=cvc` | `always_asks` | card fields: `never` |
-| Payment Element: 3D Secure required *(live-only)* | `site-a.test/checkout/stripe/element?case=3ds` | `always_asks` | card fields: `never`; Pay: `always_asks`; 3DS bank challenge frame: `blocked:captcha` |
+| Payment Element: 3D Secure required *(live-only)* | `site-a.test/checkout/stripe/element?case=3ds` | `always_asks` | card fields: `never`; Pay: `always_asks`; 3DS bank challenge frame: `blocked:verification` |
 | Hosted Checkout: payment, subscription, promo, cancel *(live-only)* | `site-a.test/checkout/stripe/hosted` | `always_asks` | button POST to this site (creates the session): `asks`; Pay on checkout.stripe.com: `always_asks`; card fields on checkout.stripe.com: `never`; Cancel link back to /checkout/stripe/cancelled: `read` |
 | Payment Link *(live-only)* | `site-a.test/checkout/stripe/link` | `always_asks` | open the buy.stripe.com link: `read`; Pay: `always_asks` |
 | Subscription: start, upgrade, downgrade, cancel *(live-only)* | `site-a.test/stripe/subscription` | `always_asks` |  |

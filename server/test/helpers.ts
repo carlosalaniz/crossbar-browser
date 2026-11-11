@@ -162,7 +162,7 @@ export function fakeAuth(users: Record<string, Partial<HumanSession>>): HumanAut
   };
 }
 
-export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth } = {}) {
+export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth; authFactory?: (db: ReturnType<typeof buildServices>["db"]) => HumanAuth } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "crossbar-test-"));
   const pool = opts.pool ?? new FakePool();
   const sent: Array<{ url: string; init: RequestInit }> = [];
@@ -182,7 +182,8 @@ export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<st
   }
   // Tests don't wait for human pacing.
   services.pacer.check = () => ({ waitMs: 0 });
-  const app = createApp({ services, tokens: services.tokens, auth: opts.auth ?? fakeAuth(opts.users ?? { alice: {} }), version: "test", appOrigin: "http://crossbar.test" });
+  const auth = opts.authFactory?.(services.db) ?? opts.auth ?? fakeAuth(opts.users ?? { alice: {} });
+  const app = createApp({ services, tokens: services.tokens, auth, version: "test", appOrigin: "http://crossbar.test" });
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
   const port = (app.server.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${port}`;
@@ -233,6 +234,7 @@ export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<st
   return {
     services,
     app,
+    auth,
     pool,
     base,
     api,

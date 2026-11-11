@@ -25,6 +25,8 @@ export const WS_BLOCK_EXTENSION = resolve(import.meta.dirname, "..", "extensions
 export interface LaunchedBrowser {
   process: ChildProcess;
   cdp: CdpConnection;
+  /** DevTools WebSocket URL (for the browser host's relay). */
+  wsUrl: string;
   executablePath: string;
   args: string[];
   close(): Promise<void>;
@@ -124,6 +126,7 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
   return {
     process: proc,
     cdp,
+    wsUrl,
     executablePath: exe,
     args,
     async close() {

@@ -405,3 +405,14 @@ describe("MCP", () => {
     await t.close();
   });
 });
+
+describe("site ladder defaults", () => {
+  test("single-label intranet names, .local and private IPs are blocked", async () => {
+    const t = await startTestApp();
+    for (const h of ["http://app:8080/", "http://nas/", "http://printer.local/", "http://10.1.2.3/", "http://[fd00::1]/", "http://host.docker.internal/"]) {
+      assert.equal(t.services.sites.resolve("alice", h).level, "blocked", h);
+    }
+    assert.equal(t.services.sites.resolve("alice", "https://example.com/").level, "read");
+    await t.close();
+  });
+});

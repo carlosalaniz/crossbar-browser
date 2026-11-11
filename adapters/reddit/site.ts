@@ -8,8 +8,10 @@ export const reddit: SiteAdapter = {
   readOperations: {
     // New Reddit sends reads as GraphQL POSTs; these only fetch.
     graphql: ["CommentsPageQuery", "PostInfoById", "SubredditInfoByName", "FeedQuery", "HomeFeedSdui", "PopularFeedSdui", "SearchPosts", "SearchSubreddits", "UserProfileQuery", "MoreComments", "ExperimentVariants", "GetRedditPremiumUsers"],
+    // GraphQL reads are matched by operationName only; never allow the whole /graphql endpoint.
     endpoints: [
-      { method: "POST", path: /^\/svc\/shreddit\/(more-comments|comments|events|graphql)\b/ },
+      { method: "POST", path: /^\/svc\/shreddit\/more-comments\// },
+      { method: "POST", path: /^\/svc\/shreddit\/events$/ },
       { method: "POST", path: /^\/api\/morechildren(\.json)?$/ },
       { method: "POST", path: /^\/api\/expando\b/ },
     ],

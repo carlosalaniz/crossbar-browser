@@ -5,3 +5,4 @@ node_modules/
 .env
 .cache/
 web/dist/
+deploy/.env

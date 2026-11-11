@@ -24,7 +24,8 @@ describe("network gate", { skip: skipReason }, () => {
   for (const c of WRITE_CASES.filter((c) => c.kind !== "socket")) {
     test(`holds a non-GET sent by ${c.name} and it never reaches the server`, async () => {
       const r = await runCase(env, c);
-      assert.ok(r.paused.length >= 1, `gate did not pause ${c.name}`);
+      // --no-pings stops hyperlink auditing outright; the step 1 spike showed Fetch also pauses it.
+      if (c.name !== "ping") assert.ok(r.paused.length >= 1, `gate did not pause ${c.name}`);
       assert.equal(r.reached.length, 0, `${c.name} reached the server: ${JSON.stringify(r.reached)}`);
     });
   }
@@ -132,5 +133,16 @@ describe("launch flags", () => {
     assert.ok(args.includes("--force-webrtc-ip-handling-policy=disable_non_proxied_udp"));
     assert.ok(args.includes("--proxy-server=http://proxy:3128"));
     assert.ok(args.includes("--proxy-bypass-list=<-loopback>"));
+  });
+});
+
+describe("launch flag merging", () => {
+  test("extra --disable-features can't drop the security list", async () => {
+    const { mergeFeatureFlags, DISABLED_FEATURES } = await import("../src/launch.ts");
+    const out = mergeFeatureFlags([`--disable-features=${DISABLED_FEATURES.join(",")}`, "--x", "--disable-features=Foo", "--enable-features=DnsOverHttps,Bar"]);
+    const dis = out.find((a) => a.startsWith("--disable-features="))!.split("=")[1]!.split(",");
+    for (const f of [...DISABLED_FEATURES, "Foo"]) assert.ok(dis.includes(f), f);
+    assert.equal(out.filter((a) => a.startsWith("--disable-features=")).length, 1);
+    assert.deepEqual(out.filter((a) => a.startsWith("--enable-features=")), ["--enable-features=Bar"]);
   });
 });

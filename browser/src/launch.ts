@@ -64,6 +64,46 @@ export function findChrome(): string | undefined {
   return CANDIDATES.find((p): p is string => !!p && existsSync(p));
 }
 
+/** Chrome features off: DNS-over-HTTPS (would bypass the proxy's DNS) and background phoning home. */
+export const DISABLED_FEATURES = [
+  "DnsOverHttps",
+  "AsyncDns",
+  "NetworkPrediction",
+  "NetworkTimeServiceQuerying",
+  "OptimizationHints",
+  "OptimizationGuideModelDownloading",
+  "MediaRouter",
+  "Translate",
+  "AutofillServerCommunication",
+  "CertificateTransparencyComponentUpdater",
+  "InterestFeedContentSuggestions",
+  "PrivacySandboxSettings4",
+  "SafeBrowsingRealTimeUrlLookup",
+  "LensOverlay",
+  "SearchPrefetchServicePrefetching",
+  "Prerender2",
+];
+
+/**
+ * Chrome keeps only the last --disable-features / --enable-features flag. Merge them, so extra
+ * args can add features but never silently drop the security list.
+ */
+export function mergeFeatureFlags(args: string[]): string[] {
+  const out: string[] = [];
+  const merged: Record<string, string[]> = { "--disable-features": [], "--enable-features": [] };
+  for (const a of args) {
+    const m = /^(--(?:disable|enable)-features)=(.*)$/.exec(a);
+    if (m) merged[m[1]!]!.push(...m[2]!.split(",").filter(Boolean));
+    else out.push(a);
+  }
+  const disabled = [...new Set(merged["--disable-features"])];
+  // A feature can't be re-enabled if security turned it off.
+  const enabled = [...new Set(merged["--enable-features"])].filter((f) => !disabled.includes(f));
+  if (disabled.length) out.push(`--disable-features=${disabled.join(",")}`);
+  if (enabled.length) out.push(`--enable-features=${enabled.join(",")}`);
+  return out;
+}
+
 /** Flags that are part of the security model. Exported so a test can pin them. */
 export function securityArgs(opts: Pick<LaunchOptions, "proxyServer">): string[] {
   const args = [
@@ -74,7 +114,15 @@ export function securityArgs(opts: Pick<LaunchOptions, "proxyServer">): string[]
     "--disable-component-update",
     "--disable-domain-reliability",
     "--disable-sync",
-    "--disable-features=DnsOverHttps,AsyncDns",
+    `--disable-features=${DISABLED_FEATURES.join(",")}`,
+    "--dns-prefetch-disable",
+    "--disable-client-side-phishing-detection",
+    "--disable-default-apps",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-search-engine-choice-screen",
+    "--metrics-recording-only",
+    "--no-service-autorun",
+    "--no-pings",
   ];
   if (opts.proxyServer) {
     args.push(`--proxy-server=${opts.proxyServer}`, "--proxy-bypass-list=<-loopback>"); // also proxy loopback
@@ -107,7 +155,8 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     ...(opts.extraArgs ?? []),
     "about:blank",
   ];
-  const proc = spawn(exe, args, { stdio: ["ignore", "ignore", "pipe"] });
+  const finalArgs = mergeFeatureFlags(args);
+  const proc = spawn(exe, finalArgs, { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = await new Promise<string>((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${buf.slice(-500)}`)), 15000);
@@ -128,7 +177,7 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     cdp,
     wsUrl,
     executablePath: exe,
-    args,
+    args: finalArgs,
     async close() {
       try {
         await cdp.send("Browser.close");

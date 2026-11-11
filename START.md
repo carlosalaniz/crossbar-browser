@@ -16,7 +16,7 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
   - The CLA text isn't written.
   - Harbor package in `harbor/` (git source) passes Harbor's `validatePackageFolder`. Harbor can't yet give the browser its sandbox; the operator must turn the "Chromium sandbox" setting off knowingly, or Harbor adds a permission that renders `deploy/browser/seccomp.json` (proposed to the Harbor session; needs the owner's decision).
   - Short or paraphrased leaks in subresource URLs after taint still pass (see the threat model).
-  - No `BlockState` kind for a 3D Secure bank challenge; a 200 "see more in the app" soft block isn't detected.
+  - No `BlockState` kind for a 3D Secure bank challenge.
   - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
 - **Next:**
   - real Reddit fixtures via a manual refresh script;

@@ -36,3 +36,14 @@ test("widget frames are recognised by path, not only by vendor host", () => {
   assert.equal(detect({ ...base, frameUrls: ["http://captcha.test/recaptcha/api2/anchor?k=x"] })?.vendor, "recaptcha");
   assert.equal(detect({ ...base, frameUrls: ["http://captcha.test/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2"] })?.vendor, "cloudflare");
 });
+
+test("app gate: truncated content behind 'see more in the app' is a soft block", () => {
+  const b = detect({ ...base, textLength: 900, textSample: "First lines of the post… See more in the app. Continue reading this post and 4 more comments in the site-a app. Open app Not now" });
+  assert.equal(b?.kind, "soft_block");
+  assert.equal(b?.vendor, "app-gate");
+  assert.equal(detect({ ...base, textLength: 900, textSample: "To keep reading, open the app." })?.kind, "soft_block");
+});
+test("a full page with an 'Open in app' banner is not a soft block", () => {
+  assert.equal(detect({ ...base, textLength: 12000, textSample: "Open in app. See more in the app. A long thread with many comments…" }), null);
+  assert.equal(detect({ ...base, textLength: 900, textSample: "Get the app for notifications. A short post with everything visible." }), null);
+});

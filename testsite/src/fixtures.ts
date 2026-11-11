@@ -33,7 +33,7 @@ export function fixtureSpecs(): FixtureSpec[] {
     { name: "register", host: "site-a.test", path: "/register", expect: "captcha" },
     { name: "wrong-origin-login", host: "site-b.test", path: "/embedded-login?for=site-a.test", expect: "login" },
     { name: "consent-wall", host: "site-b.test", path: "/consent-wall", expect: "consent" },
-    { name: "soft-block-200", host: "site-a.test", path: "/soft-block/post", expect: null, note: "GAP: a 200 soft block; no signature matches it today" },
+    { name: "soft-block-200", host: "site-a.test", path: "/soft-block/post", expect: "soft_block", note: "a 200 with truncated content behind an app gate (detect/ app-gate signature)" },
     { name: "gated-article-pass", host: "site-a.test", path: "/gated/article?mode=never", expect: null },
   );
   return specs;

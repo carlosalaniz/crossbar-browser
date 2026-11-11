@@ -282,7 +282,7 @@ expired, `4000 0000 0000 0127` incorrect CVC, `4000 0027 6000 3184` 3D Secure. T
 
 ## Known gaps
 
-- **200 soft block:** no `detect/` signature matches `/soft-block/post` today (the fixture asserts `null`).
+- **200 soft block:** `/soft-block/post` is detected by the `detect/` app-gate signature ("see more in the app" and similar wording, on pages with up to 4000 characters of visible text). Soft blocks worded any other way still read as normal pages.
 - **3D Secure has no `BlockState` kind.** It's recorded as `blocked:captcha`, the nearest kind; a
   proper kind needs an ADR that amends 0001.
 - **Service workers need a secure context.** On `http://site-a.test` through the proxy, Chrome refuses

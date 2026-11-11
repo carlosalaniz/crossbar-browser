@@ -37,9 +37,19 @@ FROM ${NODE_IMAGE} AS proxy
 WORKDIR /app
 COPY --from=build --chown=node:node /src/package.json /app/
 COPY --from=build --chown=node:node /src/proxy /app/proxy
+# Marks a production build: the dev-only test-site allowlist refuses to start here (proxy/src/dev-allowlist.ts).
+RUN touch /app/proxy/PRODUCTION_BUILD
+ENV CROSSBAR_BUILD=production
 USER node
 EXPOSE 3128
 CMD ["node", "proxy/src/main.ts"]
+
+# ---- proxy-dev: the same proxy, not marked production, so CROSSBAR_DEV_TESTSITE=1 can work. `npm run dev` only. ----
+FROM proxy AS proxy-dev
+USER root
+RUN rm -f /app/proxy/PRODUCTION_BUILD
+ENV CROSSBAR_BUILD=dev
+USER node
 
 # ---- browser: headful Chromium under Xvfb, behind the proxy. Internal network only. ----
 FROM debian:trixie-slim AS browser

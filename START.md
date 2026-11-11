@@ -8,13 +8,17 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
 - **Working mode (owner's decision, 11 Nov 2026):** agents build autonomously in one PR per step. CI must pass and the agent posts a written self-review, then merges, security core included. The owner reviews `auth/`, `browser/` and `proxy/` after the fact; PR bodies flag security-core changes. Commits carry only the owner as author.
 - `npm ci && npm run check` passes: typecheck, lint, SPDX, ~180 node tests (proxy, browser in a real Chrome for Testing, server with a fake browser and end to end, auth, detect, adapters, a UI flow driven in a browser), Vitest for `web/`, web build.
 - `npm run dev` / `dev:local` pick a free port if 8080 is taken (on IPv4 or IPv6) and print the URL; the app listens dual-stack.
-- `npm run dev` brings up app, browser (headful Chromium under Xvfb, sandboxed), proxy and a local test site at http://testsite.test:8090. `npm run dev:local` does the same without Docker.
+- `npm run dev` brings up app, browser (headful Chromium under Xvfb, sandboxed), a `proxy-dev` proxy and the test site (`testsite/`, `dev` compose profile, internal network only). `npm run dev:local` does the same without Docker.
+- **Test site** (`testsite/README.md`): site-a/b/c.test, exfil.test, tracker.test, accounts.idp.test, captcha.test, plus testsite.test for the browser/ pages. `testsite/scenarios.json` is the single source of expected outcomes. The proxy's dev-only allowlist (`CROSSBAR_DEV_TESTSITE=1`) pins those names to the test site and refuses to start in a production build. `node scripts/testsite-smoke.ts <setup-code>` compares a running stack with scenarios.json. Stripe scenarios are live-only (`testsite/.env`, `npm run testsite:stripe:seed`).
 - `node scripts/stack-smoke.ts <setup-code>` checks a running stack. `node scripts/agent-smoke.ts` lets a real model (OpenRouter key in `.env`, never committed) drive Crossbar over MCP: comment held → approved; private page asks; taint exit with 90 chars of overlap held → denied.
 - Decisions added this session: ADR 0009 (in-house CDP client), ADR 0010 (WebSocket block via DNR, Chromium/CfT only). Both **Proposed** pending owner review.
 - **Open:**
   - The CLA text isn't written.
   - Harbor package in `harbor/` (git source) passes Harbor's `validatePackageFolder`. Harbor can't yet give the browser its sandbox; the operator must turn the "Chromium sandbox" setting off knowingly, or Harbor adds a permission that renders `deploy/browser/seccomp.json` (proposed to the Harbor session; needs the owner's decision).
   - Short or paraphrased leaks in subresource URLs after taint still pass (see the threat model).
+  - Crossbar doesn't see cross-origin frames when classifying a page: `browser/` records an out-of-process iframe's URL at attach time and never updates it. Embedded captcha widgets read as normal pages, and arkose/reCAPTCHA/hCaptcha interstitials come out as `soft_block`. A login form inside a cross-origin frame isn't seen either. Probable cause, not yet confirmed; needs a `browser/` fix (testsite scenarios marked GAP).
+  - `accounts.idp.test` isn't on the sign-in-provider list (`browser/src/input-guard.ts`), so the "never type on a sign-in provider" scenario can't pass until a dev-only entry exists.
+  - No `BlockState` kind for a 3D Secure bank challenge; a 200 "see more in the app" soft block isn't detected.
   - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
 - **Next:**
   - real Reddit fixtures via a manual refresh script;

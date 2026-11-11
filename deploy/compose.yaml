@@ -20,6 +20,7 @@ services:
       CROSSBAR_ORIGIN: ${CROSSBAR_ORIGIN:-http://localhost:8080}
       CROSSBAR_BROWSER_URL: http://browser:9300   # reached only through browser/ pool
       CROSSBAR_BROWSER_SECRET: ${CROSSBAR_BROWSER_SECRET:?set CROSSBAR_BROWSER_SECRET in deploy/.env}
+      CROSSBAR_PACE_MS: ${CROSSBAR_PACE_MS:-}      # `npm run dev` sets 1000
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     depends_on: [browser]
@@ -46,15 +47,44 @@ services:
     restart: unless-stopped
 
   proxy:
-    build: { <<: *build, target: proxy }
-    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/proxy:${CROSSBAR_VERSION:-dev}
+    # proxy-dev differs only in not being marked a production build (`npm run dev` selects it).
+    build: { <<: *build, target: "${CROSSBAR_PROXY_TARGET:-proxy}" }
+    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/${CROSSBAR_PROXY_TARGET:-proxy}:${CROSSBAR_VERSION:-dev}
     networks: [internal, egress]
     environment:
       # Your home's public IP(s), so pages can't reach your router from outside.
       CROSSBAR_BLOCK_IPS: ${CROSSBAR_BLOCK_IPS:-}
+      # DEV ONLY (`npm run dev` sets these). The allowlist pins the test-site names to the testsite
+      # container. The production proxy image refuses to start with it; dev builds use target proxy-dev.
+      CROSSBAR_DEV_TESTSITE: ${CROSSBAR_DEV_TESTSITE:-}
+      CROSSBAR_DEV_TESTSITE_TARGET: testsite
+      CROSSBAR_DEV_TESTSITE_PORT: "8090"
+    extra_hosts:
+      # LAN-block check: a name whose DNS answer is loopback. `.test` is reserved (RFC 2606), so this
+      # never shadows a real site. The proxy must refuse it after resolution, dev or not.
+      - "loopback.test:127.0.0.1"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
+
+  # Fourth service, `dev` profile only: the local test site (testsite/README.md). Internal network
+  # only: no published port and no route out. The browser reaches it through the proxy's dev allowlist.
+  testsite:
+    profiles: [dev]
+    build:
+      context: ..
+      dockerfile: deploy/testsite.Dockerfile
+    image: ${CROSSBAR_IMAGE_PREFIX:-crossbar}/testsite:dev
+    networks:
+      internal:
+        aliases: [site-a.test, site-b.test, site-c.test, exfil.test, tracker.test, accounts.idp.test, captcha.test, testsite.test]
+    environment:
+      TESTSITE_BIND: 0.0.0.0
+      # No route out from here, so live-only scenarios (Stripe, real captchas) are shown as disabled.
+      TESTSITE_NO_EGRESS: "1"
+      TESTSITE_PORT: "8090"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
 
 networks:
   public: {}

@@ -1,0 +1,32 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify to continue</title><style>
+:root{color-scheme:light dark;--fg:#1b1b1f;--bg:#fafafa;--muted:#666;--line:#ddd;--accent:#2457d6;--warn:#b25e00}
+@media (prefers-color-scheme:dark){:root{--fg:#e8e8ec;--bg:#151518;--muted:#9a9aa3;--line:#333;--accent:#7aa2ff;--warn:#ffb057}}
+body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);margin:0 auto;max-width:880px;padding:16px}
+header{display:flex;gap:12px;align-items:baseline;border-bottom:1px solid var(--line);margin-bottom:16px;padding-bottom:8px}
+header .host{color:var(--muted);font-family:ui-monospace,monospace;font-size:13px}
+a{color:var(--accent)} code{font-family:ui-monospace,monospace;font-size:13px}
+table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top;font-size:14px}
+.outcome{font-family:ui-monospace,monospace;font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);white-space:nowrap}
+.note{color:var(--muted);font-size:13px} .warn{color:var(--warn)}
+form{margin:12px 0} label{display:block;margin:6px 0} input,button,textarea,select{font:inherit}
+.card{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 0}
+.disabled{opacity:.5}
+</style></head>
+<body><header><strong>Verify to continue</strong><span class="host">site-a.test</span><span style="flex:1"></span><a href="/">index</a></header>
+<p>Complete the check to read this article.</p>
+<form method="POST" action="/__captcha/clear" data-captcha><input type="hidden" name="provider" value="datadome"><input type="hidden" name="return_to" value="/gated/article?mode=always&amp;style=widget&amp;provider=datadome">
+<div id="ddChallenge" class="datadome-captcha" data-sitekey="testsite-fake" data-testsite-fake="datadome">
+  <iframe src="http://captcha.test/geo.captcha-delivery.com/captcha/?initialCid=fake&amp;hash=fake&amp;cid=fake&amp;t=fe&amp;referer=fake" title="DataDome (test-site fake)" width="304" height="78" style="border:1px solid #bbb;border-radius:4px" sandbox="allow-scripts allow-same-origin"></iframe>
+  <input type="hidden" name="datadome-response" value="">
+</div>
+<script>
+addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || d.type !== "testsite-captcha" || d.provider !== "datadome") return;
+  if (new URL("http://captcha.test/geo.captcha-delivery.com/captcha/?initialCid=fake&hash=fake&cid=fake&t=fe&referer=fake").origin !== e.origin) return;
+  const f = document.querySelector('input[name="datadome-response"]');
+  f.value = d.token;
+  
+});
+</script><button>Continue</button></form></body></html>

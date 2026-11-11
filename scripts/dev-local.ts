@@ -1,24 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `npm run dev:local`: the whole stack in one process, no Docker. Egress proxy, local test site,
-// and the app with a local Chromium behind the proxy. The test site is reachable as http://testsite.test:8090.
+// and the app with a local Chromium behind the proxy. The test site answers as http://site-a.test:<port> (all
+// scenarios) and http://testsite.test:<port> (browser/ test pages); the port starts at 8090.
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 import { lookup } from "node:dns/promises";
 import { createEgressProxy } from "../proxy/src/proxy.ts";
-import { startSite } from "../browser/test/site.ts";
+import { devAllowlistFromEnv, devAllowlistWarning } from "../proxy/src/dev-allowlist.ts";
+import { createTestsite } from "../testsite/src/app.ts";
+import { loadEnv } from "../testsite/src/env.ts";
 import { freePort } from "./free-port.mjs";
 
-const site = await startSite({ port: await freePort(8090) });
+// The test site (testsite/) on loopback, answering for every *.test scenario host and testsite.test.
+const sitePort = await freePort(8090);
+const { server: siteServer } = createTestsite({ env: loadEnv() });
+await new Promise<void>((r) => siteServer.listen(sitePort, "127.0.0.1", r));
+const site = { port: sitePort, close: () => new Promise<void>((r) => siteServer.close(() => r())) };
+// Dev-only allowlist: the test-site names are pinned to 127.0.0.1:<sitePort>; everything else is checked as usual.
+const devAllowlist = devAllowlistFromEnv({ ...process.env, CROSSBAR_DEV_TESTSITE: "1", CROSSBAR_DEV_TESTSITE_TARGET: "127.0.0.1", CROSSBAR_DEV_TESTSITE_PORT: String(sitePort) });
+console.warn(devAllowlistWarning(devAllowlist!));
 const proxy = createEgressProxy({
-  // The test site lives on loopback; only the exact name "testsite.test" may reach it.
-  resolve: async (h) => (h === "testsite.test" ? ["127.0.0.1"] : (await lookup(h, { all: true, verbatim: true })).map((a) => a.address)),
-  devAllowPrivateHosts: ["testsite.test"],
+  resolve: async (h) => (await lookup(h, { all: true, verbatim: true })).map((a) => a.address),
+  devAllowlist,
   onDecision: (d) => !d.allowed && console.log(`proxy refused ${d.kind} ${d.host}:${d.port} (${d.reason})`),
 });
 await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
 const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-console.log(`egress proxy ${proxyUrl}; test site http://testsite.test:${site.port}/pages/article`);
+console.log(`egress proxy ${proxyUrl}; test site http://site-a.test:${site.port}/ and http://testsite.test:${site.port}/pages/article`);
 
 const port = process.env.CROSSBAR_PORT ?? String(await freePort(8080));
 if (port !== "8080" && !process.env.CROSSBAR_PORT) console.log(`Port 8080 is in use; using ${port}.`);

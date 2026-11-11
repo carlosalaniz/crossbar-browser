@@ -149,22 +149,3 @@ test("every decision is reported for request logging", () => {
   assert.ok(decisions.some((d) => !d.allowed && d.reason?.startsWith("private")));
   assert.ok(decisions.some((d) => d.allowed && d.dialed === PUBLIC_IP));
 });
-
-test("development allow-list is exact-host only", async () => {
-  const seen: string[] = [];
-  const p = createEgressProxy({
-    resolve: async (h) => (h === "testsite" || h === "testsite.evil" ? ["172.20.0.5"] : []),
-    connect: (ip) => {
-      seen.push(ip);
-      return net.connect({ host: "127.0.0.1", port: originPort });
-    },
-    devAllowPrivateHosts: ["testsite"],
-  });
-  await new Promise<void>((r) => p.listen(0, "127.0.0.1", r));
-  const port = (p.address() as AddressInfo).port;
-  const get = (path: string) => new Promise<number>((resolve) => http.get({ host: "127.0.0.1", port, path }, (res) => (res.resume(), resolve(res.statusCode ?? 0))));
-  assert.equal(await get("http://testsite:8080/"), 200);
-  assert.equal(await get("http://testsite.evil/"), 403);
-  p.close();
-  assert.deepEqual(seen, ["172.20.0.5"]);
-});

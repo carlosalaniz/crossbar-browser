@@ -4,5 +4,5 @@ node_modules
 .git
 web/dist
 deploy/.env
-.env
+**/.env
 data

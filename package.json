@@ -14,7 +14,8 @@
     "proxy",
     "detect",
     "adapters",
-    "web"
+    "web",
+    "testsite"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
@@ -29,7 +30,11 @@
     "build:web": "node scripts/build-web.mjs",
     "test:web": "vitest run --root web --dir web/test",
     "start": "node server/src/main.ts",
-    "dev:local": "node scripts/dev-local.ts"
+    "dev:local": "node scripts/dev-local.ts",
+    "testsite": "node testsite/src/main.ts",
+    "testsite:fixtures": "node testsite/src/fixtures.ts",
+    "testsite:stripe:seed": "node testsite/src/stripe/seed.ts seed",
+    "testsite:stripe:reset": "node testsite/src/stripe/seed.ts reset"
   },
   "devDependencies": {
     "@puppeteer/browsers": "^3.2.7",

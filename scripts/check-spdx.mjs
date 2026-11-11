@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const roots = ["shared", "server", "auth", "browser", "proxy", "detect", "adapters", "web", "scripts"];
+const roots = ["shared", "server", "auth", "browser", "proxy", "detect", "adapters", "web", "scripts", "testsite"];
 const exts = [".ts", ".js", ".mjs"];
 const skip = new Set(["node_modules", "pages", "fixtures", "dist"]);
 const missing = [];

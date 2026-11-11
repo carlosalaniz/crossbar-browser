@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// npm run dev: builds and starts app, browser, proxy and a local test site with docker compose.
+// npm run dev: builds and starts app, browser, proxy and the local test site with docker compose
+// (`dev` profile). The proxy is built from the proxy-dev target with the dev-only test-site allowlist on.
 import { existsSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -19,7 +20,13 @@ if (up && !process.env.CROSSBAR_PORT) {
   process.env.CROSSBAR_ORIGIN ??= `http://localhost:${port}`;
   if (port !== 8080) console.log(`Port 8080 is in use; using ${port}.`);
 }
-const args = ["compose", "--env-file", envFile, "-f", "deploy/compose.yaml", "-f", "deploy/compose.dev.yaml", ...(process.argv.slice(2).length ? process.argv.slice(2) : ["up", "--build"])];
-console.log(`docker ${args.join(" ")}\nWhen it's up: open ${process.env.CROSSBAR_ORIGIN ?? "http://localhost:8080"} and find the setup code with  docker compose -f deploy/compose.yaml logs app\nTest pages for agents: http://testsite.test:8090/pages/article (and /pages/infinite, /pages/login, ...)`);
-const r = spawnSync("docker", args, { stdio: "inherit", cwd: resolve(import.meta.dirname, "..") });
+const args = ["compose", "--env-file", envFile, "-f", "deploy/compose.yaml", "--profile", "dev", ...(process.argv.slice(2).length ? process.argv.slice(2) : ["up", "--build"])];
+console.log(`docker ${args.join(" ")}
+When it's up: open ${process.env.CROSSBAR_ORIGIN ?? "http://localhost:8080"} and find the setup code with  docker compose -f deploy/compose.yaml logs app
+Test site for agents: http://site-a.test:8090/ (every scenario), http://testsite.test:8090/pages/article (browser/ test pages)`);
+const r = spawnSync("docker", args, {
+  stdio: "inherit",
+  cwd: resolve(import.meta.dirname, ".."),
+  env: { ...process.env, CROSSBAR_DEV_TESTSITE: "1", CROSSBAR_PROXY_TARGET: "proxy-dev", CROSSBAR_PACE_MS: process.env.CROSSBAR_PACE_MS ?? "1000" },
+});
 process.exit(r.status ?? 1);

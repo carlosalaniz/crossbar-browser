@@ -6,6 +6,7 @@ import http from "node:http";
 import net from "node:net";
 import { lookup } from "node:dns/promises";
 import { checkAddress, type AddressPolicyOptions } from "./ip.ts";
+import { allowlisted, type DevAllowlist } from "./dev-allowlist.ts";
 
 export type Resolver = (host: string) => Promise<string[]>;
 export type Connector = (ip: string, port: number) => net.Socket;
@@ -24,9 +25,9 @@ export interface EgressProxyOptions extends AddressPolicyOptions {
   resolve?: Resolver;
   connect?: Connector;
   allowedPorts?: number[];
-  /** Development only: these exact hostnames skip the private-address check (any port). */
-  devAllowPrivateHosts?: string[];
   onDecision?: (d: ProxyDecision) => void;
+  /** DEV ONLY (CROSSBAR_DEV_TESTSITE=1): test-site names pinned to the test site's address. See dev-allowlist.ts. */
+  devAllowlist?: DevAllowlist | null;
 }
 
 const defaultResolve: Resolver = async (host) =>
@@ -49,13 +50,25 @@ export function createEgressProxy(opts: EgressProxyOptions = {}): http.Server {
   const resolve = opts.resolve ?? defaultResolve;
   const connect = opts.connect ?? defaultConnect;
   const ports = new Set(opts.allowedPorts ?? [80, 443]);
-  const devAllow = new Set((opts.devAllowPrivateHosts ?? []).map((h) => h.toLowerCase()));
+
+  const dev = opts.devAllowlist ?? null;
 
   async function decide(rawHost: string, port: number): Promise<Target> {
     const host = normaliseHost(rawHost);
     if (!host) return { ok: false, reason: "bad-host", addresses: [] };
-    const dev = devAllow.has(host);
-    if (!ports.has(port) && !dev) return { ok: false, reason: `port-${port}-not-allowed`, addresses: [] };
+    if (allowlisted(dev, host)) {
+      // Pinned: never looked up in DNS; only the test site's own addresses, only its ports.
+      if (!ports.has(port) && port !== dev!.port) return { ok: false, reason: `port-${port}-not-allowed`, addresses: [] };
+      let addresses: string[];
+      try {
+        addresses = net.isIP(dev!.target) ? [dev!.target] : await resolve(dev!.target);
+      } catch {
+        return { ok: false, reason: "dev-testsite-unresolved", addresses: [] };
+      }
+      if (addresses.length === 0) return { ok: false, reason: "dev-testsite-unresolved", addresses };
+      return { ok: true, ip: addresses[0]!, addresses };
+    }
+    if (!ports.has(port)) return { ok: false, reason: `port-${port}-not-allowed`, addresses: [] };
     let addresses: string[];
     if (net.isIP(host)) addresses = [host];
     else {
@@ -68,7 +81,6 @@ export function createEgressProxy(opts: EgressProxyOptions = {}): http.Server {
     if (addresses.length === 0) return { ok: false, reason: "dns-empty", addresses };
     // Every answer must pass; a mixed answer is treated as an attack.
     for (const a of addresses) {
-      if (dev) break;
       const v = checkAddress(a, opts);
       if (!v.allowed) return { ok: false, reason: `${v.reason}:${a}`, addresses };
     }

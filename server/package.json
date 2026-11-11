@@ -3,5 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "tldts": "^7.4.22"
+  }
 }

@@ -95,7 +95,7 @@ describe("network gate", { skip: skipReason }, () => {
 
 describe("gate policy", () => {
   test("default policy holds every method except GET and HEAD", () => {
-    const base = { requestId: "1", sessionId: "s", targetType: "page", targetUrl: "", url: "http://x/", resourceType: "Fetch" as const, frameId: "f", hasPostData: false };
+    const base = { requestId: "1", sessionId: "s", rootSessionId: "s", targetType: "page", targetUrl: "", url: "http://x/", resourceType: "Fetch" as const, frameId: "f", hasPostData: false };
     for (const m of ["GET", "HEAD"]) assert.equal(holdNonGet({ ...base, method: m }), "allow");
     for (const m of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND", "post"]) assert.equal(holdNonGet({ ...base, method: m }), "hold");
   });

@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Virtualized list</title>
+<style>body{margin:0;font:16px sans-serif} #spacer{position:relative} .row{position:absolute;left:0;right:0;height:100px;border-bottom:1px solid #ccc}</style></head>
+<body><div id="spacer"></div>
+<script>
+  // Only rows near the viewport exist in the DOM, like virtualized feeds.
+  const TOTAL = 80, H = 100; const spacer = document.getElementById('spacer'); spacer.style.height = TOTAL * H + 'px';
+  function render() {
+    const first = Math.max(0, Math.floor(scrollY / H) - 2), last = Math.min(TOTAL, Math.ceil((scrollY + innerHeight) / H) + 2);
+    spacer.textContent = '';
+    for (let i = first; i < last; i++) { const r = document.createElement('article'); r.className = 'row'; r.style.top = i * H + 'px'; r.dataset.rowId = 'r' + i; r.textContent = 'Row ' + i; spacer.append(r); }
+  }
+  render(); addEventListener('scroll', render);
+</script></body></html>

@@ -49,6 +49,7 @@ export function buildServices(o: BuildOptions): Services & { tokens: Tokens } {
     pacer: new Pacer(o.pace),
     adblock: o.adblock,
     settleMs: o.settleMs ?? 1500,
+    appOrigin: o.appOrigin,
     tokens: new Tokens(db),
   };
 }

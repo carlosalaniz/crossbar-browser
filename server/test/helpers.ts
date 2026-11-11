@@ -135,6 +135,13 @@ export class FakeTab implements Tab {
   async screenshot() {
     return "ZmFrZQ==";
   }
+  allowPopups() {}
+  onPopup() {
+    return () => {};
+  }
+  onClose() {
+    return () => {};
+  }
   async close() {}
 }
 

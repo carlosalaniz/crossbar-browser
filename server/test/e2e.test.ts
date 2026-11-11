@@ -72,4 +72,38 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal(d.stoppedBecause, "target");
     assert.equal(d.items.length, 30);
   });
+
+  test("takeover follows a sign-in popup and comes back when it closes", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    const r = await c.call("open", { url: site.url("a.test", "/pages/sso") });
+    assert.equal(r.state, "blocked", JSON.stringify(r));
+    const id = r.ticket!.id;
+    const claim = await t.api("POST", `/api/tickets/${id}/claim`, { user: "alice" });
+    const base = claim.json.tab as string;
+    const key = async (k: string) => {
+      await t.api("POST", `/api/tickets/${id}/input`, { user: "alice", body: { type: "keyDown", key: k, code: k, text: k === "Enter" ? "\r" : "" } });
+      await t.api("POST", `/api/tickets/${id}/input`, { user: "alice", body: { type: "keyUp", key: k, code: k } });
+    };
+    // Focus the "Sign in with IdP" button (after the password field) and press Enter: a user gesture opens the popup.
+    await key("Tab");
+    await key("Tab");
+    await key("Enter");
+    let current = base;
+    for (let i = 0; i < 40 && current === base; i++) {
+      await sleep(100);
+      current = String((await t.api("GET", `/api/tickets/${id}`, { user: "alice" })).json.takeoverTab);
+    }
+    assert.notEqual(current, base, "the popup didn't become the takeover tab");
+    // In the popup (another site), the Allow button has focus.
+    await sleep(500);
+    await key("Enter");
+    for (let i = 0; i < 40 && current !== base; i++) {
+      await sleep(100);
+      current = String((await t.api("GET", `/api/tickets/${id}`, { user: "alice" })).json.takeoverTab);
+    }
+    assert.equal(current, base, "control didn't come back when the popup closed");
+    await sleep(800);
+    const done = await t.api("POST", `/api/tickets/${id}/done`, { user: "alice" });
+    assert.equal(done.json.verified, true, JSON.stringify(done.json));
+  });
 });

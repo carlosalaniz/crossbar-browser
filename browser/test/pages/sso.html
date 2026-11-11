@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sign in</title></head>
+<body><h1>Sign in to continue</h1>
+<form><input type="password" autocomplete="current-password" placeholder="Password"></form>
+<button id="sso">Sign in with IdP</button>
+<script>
+  document.getElementById('sso').addEventListener('click', () => {
+    window.open('http://b.test:' + location.port + '/pages/idp', 'idp', 'popup,width=400,height=600');
+  });
+  window.addEventListener('message', (e) => { if (e.data === 'signed-in') location.href = '/pages/article'; });
+</script>
+</body></html>

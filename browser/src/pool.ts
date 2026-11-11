@@ -75,6 +75,10 @@ export interface Tab {
   emulate(device: DeviceKind): Promise<void>;
   startScreencast(onFrame: (jpegBase64: string, meta: FrameMeta) => void, opts?: { maxWidth?: number; maxHeight?: number; fps?: number }): Promise<void>;
   stopScreencast(): Promise<void>;
+  /** Popups this tab opens become tabs too (takeover only: e.g. a "Sign in with…" window). Off by default. */
+  allowPopups(on: boolean): void;
+  onPopup(cb: (popup: Tab) => void): () => void;
+  onClose(cb: () => void): () => void;
   /** Takeover input, from a person. Not an agent tool. */
   input(ev: InputEvent): Promise<void>;
   screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string>;
@@ -148,15 +152,31 @@ class ManagedBrowser {
       onAttach: (t) => this.onAttach(t),
     });
     await this.gate.start();
+    this.cdp.on("Target.detachedFromTarget", (p) => {
+      const tab = this.tabsBySession.get(p.sessionId);
+      if (tab) {
+        this.tabsBySession.delete(p.sessionId);
+        tab.emitClose();
+      }
+    });
     // Block third-party cookies.
     await this.cdp.send("Storage.setCookieControls" as never, { enableThirdPartyCookieRestriction: true } as never).catch(() => {});
   }
 
   private onAttach(t: Attached): void {
-    // Pages we didn't create (popups, window.open) are closed: no tab owns them, so no policy fits.
-    if (t.type === "page" && !t.parentSessionId && !this.expected.has(t.targetId) && t.url !== "about:blank" && t.url !== "") {
-      void this.cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+    if (t.type !== "page" || t.parentSessionId || this.expected.has(t.targetId)) return;
+    // A popup from a tab that allows them (takeover) is adopted with its opener's policy, before its
+    // first request runs (the gate attaches with the target paused).
+    const opener = t.openerId ? [...this.tabsBySession.values()].find((x) => x.mainFrameId === t.openerId) : undefined;
+    if (opener?.popupsAllowed) {
+      const popup = new CdpTab(this, t.sessionId, t.targetId, opener.profile);
+      popup.policy = opener.policy;
+      this.tabsBySession.set(t.sessionId, popup);
+      void popup.init().then(() => opener.emitPopup(popup)).catch(() => {});
+      return;
     }
+    // Other pages we didn't create are closed: no tab owns them, so no policy fits.
+    if (t.url !== "about:blank" && t.url !== "") void this.cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
   }
 
   private route(r: GateRequest): Verdict | Decision {
@@ -186,6 +206,9 @@ class ManagedBrowser {
 class CdpTab implements Tab {
   readonly id = randomUUID();
   policy?: TabPolicy;
+  popupsAllowed = false;
+  private readonly popupCbs = new Set<(t: Tab) => void>();
+  private readonly closeCbs = new Set<() => void>();
   private lastDoc: { status: number | null; headers: Record<string, string> } = { status: null, headers: {} };
   private frameHandler?: () => void;
   private readonly offs: Array<() => void> = [];
@@ -235,6 +258,24 @@ class CdpTab implements Tab {
 
   setPolicy(p: TabPolicy): void {
     this.policy = p;
+  }
+
+  allowPopups(on: boolean): void {
+    this.popupsAllowed = on;
+  }
+  onPopup(cb: (t: Tab) => void): () => void {
+    this.popupCbs.add(cb);
+    return () => this.popupCbs.delete(cb);
+  }
+  onClose(cb: () => void): () => void {
+    this.closeCbs.add(cb);
+    return () => this.closeCbs.delete(cb);
+  }
+  emitPopup(t: Tab): void {
+    for (const cb of this.popupCbs) cb(t);
+  }
+  emitClose(): void {
+    for (const cb of this.closeCbs) cb();
   }
 
   private async waitLoad(timeoutMs = 15000): Promise<void> {

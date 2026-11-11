@@ -160,4 +160,29 @@ describe("web app flow", { skip: skipReason }, () => {
     const after = (await call("read")) as { data: { profile: string } };
     assert.equal(after.data.profile, "signed_in");
   });
+
+  test("passkeys: register in settings, log out, log back in with the passkey", async () => {
+    // Chrome's virtual authenticator stands in for Face ID / a security key.
+    await ui.cdp.send("WebAuthn.enable", { enableUI: false }, s);
+    await ui.cdp.send(
+      "WebAuthn.addVirtualAuthenticator",
+      { options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } },
+      s,
+    );
+    await ev(`location.hash = '#/settings'`);
+    await until(hasText("Add a passkey"));
+    await clickText("Add a passkey");
+    await until(hasText("Recovery codes"));
+    const codes = String(await ev(`[...document.querySelectorAll('pre')].map(p => p.textContent).find(t => /^[a-z0-9]{4}-/.test(t)) ?? ''`));
+    assert.equal(codes.split("\n").length, 10);
+    await ev(`location.hash = '#/'; location.hash = '#/settings'`);
+    await until(hasText("1 passkey(s)"));
+    await clickText("Log out");
+    await until(hasText("Log in with a passkey"));
+    await clickText("Log in with a passkey");
+    await until(hasText("Inbox"));
+    const me = await ev(`fetch('/api/me', { headers: { 'x-crossbar': '1' } }).then(r => r.json())`);
+    assert.equal((me as { username: string; twoFactor: boolean }).username, "carlos");
+    assert.equal((me as { twoFactor: boolean }).twoFactor, true);
+  });
 });

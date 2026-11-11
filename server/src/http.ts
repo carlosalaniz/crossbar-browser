@@ -162,7 +162,8 @@ export function createApp(o: AppOptions) {
   const s = o.services;
   const registry = new SessionRegistry(s);
   const live = new LiveView();
-  const takeovers = new Map<string, { tab: Tab; session: AgentSession }>();
+  // tab = what the person is driving now (the claimed tab, or a sign-in popup it opened); base = the claimed tab.
+  const takeovers = new Map<string, { tab: Tab; base: Tab; session: AgentSession }>();
   const screenshots = new Map<string, string>();
   s.tickets.on("screenshot", (e: { ticketId: string; jpeg: string }) => {
     screenshots.set(e.ticketId, e.jpeg);
@@ -171,7 +172,7 @@ export function createApp(o: AppOptions) {
   const svc = Object.assign(s, { closeUserSessions: (u: string) => registry.closeUser(u) });
 
   const findTab = (userId: string, tabId: string): Tab | null => {
-    for (const a of registry.forUser(userId)) for (const p of ["anon", "personal"] as const) if (a.tabFor(p)?.id === tabId) return a.tabFor(p)!;
+    for (const a of registry.forUser(userId)) for (const t of a.allTabs()) if (t.id === tabId) return t;
     return null;
   };
 
@@ -193,6 +194,7 @@ export function createApp(o: AppOptions) {
       offerAlways: onceCount >= 3,
       hasScreenshot: screenshots.has(t.id),
       takeover: takeovers.has(t.id),
+      takeoverTab: takeovers.get(t.id)?.tab.id ?? null,
     };
   };
 
@@ -286,27 +288,33 @@ export function createApp(o: AppOptions) {
       s.tickets.claim(t.id, "human-takeover");
       // Logging in always happens in the personal profile: that's the opt-in to "read as you".
       const profile = f.kind === "login" ? "personal" : f.profile;
-      const tab = await a.takeoverTab(profile, f.url);
-      takeovers.set(t.id, { tab, session: a });
+      const entry = { tab: null as unknown as Tab, base: null as unknown as Tab, session: a };
+      const tab = await a.takeoverTab(profile, f.url, (current) => {
+        entry.tab = current;
+      });
+      entry.tab = tab;
+      entry.base = tab;
+      takeovers.set(t.id, entry);
       return { ...ticketView(s.tickets.get(t.id)!), tab: tab.id, origin: new URL(f.url).origin };
     },
     "POST /api/tickets/:id/input": async (c) => {
       const t = requireTicket(c);
       const tk = takeovers.get(t.id);
       if (!tk || t.state !== "claimed") throw new HttpError(409, "Not under takeover.");
-      await tk.tab.input(c.body as z.infer<typeof TakeoverInput>);
-      return { ok: true, url: await tk.tab.currentUrl() };
+      // The popup may close between events; then the input goes to the claimed tab.
+      await tk.tab.input(c.body as z.infer<typeof TakeoverInput>).catch(() => tk.base.input(c.body as z.infer<typeof TakeoverInput>));
+      return { ok: true, url: await tk.tab.currentUrl().catch(() => tk.base.currentUrl().catch(() => "")) };
     },
     "POST /api/tickets/:id/done": async (c) => {
       const t = requireTicket(c);
       const tk = takeovers.get(t.id);
       if (!tk || t.state !== "claimed") throw new HttpError(409, "Not under takeover.");
       // The verifier, not the resolver, decides (ADR 0001).
-      const still = await tk.session.verifyTab(tk.tab);
+      const still = await tk.session.verifyTab(tk.base);
       const f = t.facts as { kind: string; domain: string };
       if (still && still.kind !== "consent") {
         s.tickets.reopen(t.id);
-        await tk.session.endTakeover(tk.tab);
+        await tk.session.endTakeover(tk.base);
         takeovers.delete(t.id);
         return { verified: false, still: still.kind, evidence: still.evidence };
       }
@@ -315,7 +323,7 @@ export function createApp(o: AppOptions) {
         if (LEVEL_RANK[cur.level] < LEVEL_RANK.read_as_you && cur.level !== "blocked") s.sites.set(t.userId, { pattern: f.domain, level: "read_as_you" }, "ticket");
         tk.session.setActive("personal");
       }
-      await tk.session.endTakeover(tk.tab);
+      await tk.session.endTakeover(tk.base);
       takeovers.delete(t.id);
       return { verified: true, ticket: ticketView(s.tickets.resolve(t.id, { verifiedBy: "detect" })) };
     },

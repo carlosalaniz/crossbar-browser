@@ -130,8 +130,8 @@ test("detect/ sees the login wall, consent wall, pacing 429 and status-only bloc
     assert.equal(detect(factsFrom("http://site-a.test/paced/feed", limited))?.kind, "soft_block");
     const bare = await c.get("site-a.test", "/gated/article?mode=always&style=status&status=403");
     assert.equal(detect(factsFrom("http://site-a.test/gated/article", bare))?.kind, "soft_block");
-    // The documented gap: the 200 soft block isn't detected today.
-    assert.equal(detect(factsFrom("http://site-a.test/soft-block/post", await c.get("site-a.test", "/soft-block/post"))), null);
+    // The 200 soft block behind an app gate (detect/ app-gate signature).
+    assert.equal(detect(factsFrom("http://site-a.test/soft-block/post", await c.get("site-a.test", "/soft-block/post")))?.kind, "soft_block");
   } finally {
     await site.close();
   }

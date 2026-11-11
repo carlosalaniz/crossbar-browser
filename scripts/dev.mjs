@@ -27,6 +27,6 @@ Test site for agents: http://site-a.test:8090/ (every scenario), http://testsite
 const r = spawnSync("docker", args, {
   stdio: "inherit",
   cwd: resolve(import.meta.dirname, ".."),
-  env: { ...process.env, CROSSBAR_DEV_TESTSITE: "1", CROSSBAR_PROXY_TARGET: "proxy-dev", CROSSBAR_PACE_MS: process.env.CROSSBAR_PACE_MS ?? "1000" },
+  env: { ...process.env, CROSSBAR_DEV_TESTSITE: "1", CROSSBAR_PROXY_TARGET: "proxy-dev", CROSSBAR_PACE_MS: process.env.CROSSBAR_PACE_MS ?? "1000", CROSSBAR_SIGNIN_PROVIDERS: process.env.CROSSBAR_SIGNIN_PROVIDERS ?? "accounts.idp.test" },
 });
 process.exit(r.status ?? 1);

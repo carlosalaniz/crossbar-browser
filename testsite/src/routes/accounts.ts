@@ -145,27 +145,37 @@ ${widgetFor(ctx, app, cfg.provider)}
     const q = new URLSearchParams({ client_id: "site-a", redirect_uri: hostUrl(ctx, "site-a.test", "/oauth/callback"), scope: "profile email contacts.read", state: "fixture-state", response_type: "code" });
     redirect(ctx, hostUrl(ctx, "accounts.idp.test", `/oauth/authorize?${q}`));
   });
-  r.add("accounts.idp.test", "GET", "/oauth/authorize", (ctx) => {
-    const q = ctx.url.searchParams;
-    if (!ctx.session.user) return redirect(ctx, `/signin?continue=${encodeURIComponent(ctx.url.pathname + ctx.url.search)}`);
-    const hidden = ["client_id", "redirect_uri", "scope", "state"].map((k) => `<input type="hidden" name="${k}" value="${esc(q.get(k) ?? "")}">`).join("");
-    send(ctx, 200, page("Authorize site-a", `<p><strong>${esc(q.get("client_id"))}</strong> wants to access your account (${esc(ctx.session.user)}):</p>
-<ul>${(q.get("scope") ?? "").split(" ").map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
-<form method="POST" action="/oauth/authorize">${hidden}<button name="decision" value="allow">Allow</button> <button name="decision" value="deny">Deny</button></form>`, { host: ctx.host }));
+  r.add("site-a.test", "GET", "/connect/site-b", (ctx) => {
+    const q = new URLSearchParams({ client_id: "site-a", redirect_uri: hostUrl(ctx, "site-a.test", "/oauth/callback"), scope: "profile email repo.write", state: "fixture-state", response_type: "code" });
+    redirect(ctx, hostUrl(ctx, "site-b.test", `/oauth/authorize?${q}`));
   });
-  r.add("accounts.idp.test", "POST", "/oauth/authorize", (ctx) => {
-    const b = ctx.body;
-    let target: URL;
-    try {
-      target = new URL(b.redirect_uri ?? "");
-    } catch {
-      return send(ctx, 400, "bad redirect_uri");
-    }
-    if (b.decision === "allow") target.searchParams.set("code", "fixture-code");
-    else target.searchParams.set("error", "access_denied");
-    target.searchParams.set("state", b.state ?? "");
-    redirect(ctx, target.toString(), 303);
-  });
+  // The same consent page on two providers: accounts.idp.test (a sign-in provider; agents are refused
+  // there) and site-b.test (an ordinary site acting as an OAuth provider; the fixture user is already
+  // signed in, so an agent reaches the Allow/Deny decision).
+  for (const provider of ["accounts.idp.test", "site-b.test"] as const) {
+    r.add(provider, "GET", "/oauth/authorize", (ctx) => {
+      const q = ctx.url.searchParams;
+      if (provider === "site-b.test") ctx.session.user ??= "alice@site-b.test";
+      if (!ctx.session.user) return redirect(ctx, `/signin?continue=${encodeURIComponent(ctx.url.pathname + ctx.url.search)}`);
+      const hidden = ["client_id", "redirect_uri", "scope", "state"].map((k) => `<input type="hidden" name="${k}" value="${esc(q.get(k) ?? "")}">`).join("");
+      send(ctx, 200, page("Authorize site-a", `<p><strong>${esc(q.get("client_id"))}</strong> wants to access your account (${esc(ctx.session.user)}):</p>
+  <ul>${(q.get("scope") ?? "").split(" ").map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+  <form method="POST" action="/oauth/authorize">${hidden}<button name="decision" value="allow">Allow</button> <button name="decision" value="deny">Deny</button></form>`, { host: ctx.host }));
+    });
+    r.add(provider, "POST", "/oauth/authorize", (ctx) => {
+      const b = ctx.body;
+      let target: URL;
+      try {
+        target = new URL(b.redirect_uri ?? "");
+      } catch {
+        return send(ctx, 400, "bad redirect_uri");
+      }
+      if (b.decision === "allow") target.searchParams.set("code", "fixture-code");
+      else target.searchParams.set("error", "access_denied");
+      target.searchParams.set("state", b.state ?? "");
+      redirect(ctx, target.toString(), 303);
+    });
+  }
   r.add("site-a.test", "GET", "/oauth/callback", (ctx) => {
     const q = ctx.url.searchParams;
     send(ctx, 200, page("Connected", q.get("code") ? `<p>IdP connected (code ${esc(q.get("code"))}).</p>` : `<p>Not connected: ${esc(q.get("error"))}.</p>`, { host: ctx.host }));

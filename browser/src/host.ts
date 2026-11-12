@@ -22,6 +22,10 @@ if (!proxy && env.CROSSBAR_ALLOW_NO_PROXY !== "1") {
   process.exit(1);
 }
 const headless = env.CROSSBAR_HEADLESS === "1";
+// The window fills the virtual screen like a maximized browser on a 1920x1080 desktop (the Xvfb screen in
+// deploy/Dockerfile), and speaks the owner's language. TZ in the environment sets the time zone (audit S32, S33).
+const windowSize = env.CROSSBAR_WINDOW_SIZE ?? "1920,1080";
+const lang = env.CROSSBAR_LANG ? env.CROSSBAR_LANG.replace(/\..*$/, "").replace("_", "-") : undefined;
 // Chromium's sandbox is on unless an operator explicitly turns it off (e.g. on a host that can't give the
 // container the namespaces it needs). Off means a compromised renderer isn't contained.
 const sandbox = (env.CROSSBAR_CHROME_SANDBOX ?? "on") !== "off";
@@ -51,6 +55,8 @@ async function launch(userId: string, profile: string): Promise<Running> {
     userDataDir: dir,
     proxyServer: proxy,
     headless,
+    windowSize,
+    lang,
     extraArgs: [
       ...(env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : []),
       "--disable-dev-shm-usage",

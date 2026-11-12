@@ -21,6 +21,9 @@ if (up && !process.env.CROSSBAR_PORT) {
   process.env.CROSSBAR_ORIGIN = devOrigins(port);
   if (port !== 8080) console.log(`Port 8080 is in use; using ${port}.`);
 }
+// The browser's time zone and language follow this machine's (audit S33).
+process.env.CROSSBAR_TZ ??= Intl.DateTimeFormat().resolvedOptions().timeZone;
+process.env.CROSSBAR_LANG ??= Intl.DateTimeFormat().resolvedOptions().locale;
 const args = ["compose", "--env-file", envFile, "-f", "deploy/compose.yaml", "--profile", "dev", ...(process.argv.slice(2).length ? process.argv.slice(2) : ["up", "--build"])];
 process.env.CROSSBAR_ORIGIN ??= devOrigins(process.env.CROSSBAR_PORT ?? 8080);
 console.log(`docker ${args.join(" ")}

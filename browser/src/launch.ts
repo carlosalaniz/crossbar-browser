@@ -9,6 +9,10 @@ import { CdpConnection } from "./cdp.ts";
 
 export interface LaunchOptions {
   executablePath?: string;
+  /** Window size "W,H". The container sets it to fill its virtual screen (audit S32); tests keep the default. */
+  windowSize?: string;
+  /** UI and Accept-Language language, e.g. "en-US" (audit S33). Unset: the system's. */
+  lang?: string;
   /** The egress proxy. Production always sets this; tests against local pages may not. */
   proxyServer?: string;
   headless?: boolean;
@@ -201,8 +205,10 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     "--no-default-browser-check",
     "--password-store=basic",
     "--use-mock-keychain",
-    // A desktop window of a normal size (Xvfb's screen is 1280x1024); the viewport fits inside it.
-    "--window-size=1280,800",
+    // A desktop window of a normal size; the viewport fits inside it.
+    `--window-size=${opts.windowSize ?? "1280,800"}`,
+    "--window-position=0,0",
+    ...(opts.lang ? [`--lang=${opts.lang}`, `--accept-lang=${opts.lang},${opts.lang.split("-")[0]}`] : []),
     ...securityArgs(opts),
     ...(opts.headless ?? true ? ["--headless=new"] : []),
     ...(opts.hostResolverRules ? [`--host-resolver-rules=${opts.hostResolverRules}`] : []),

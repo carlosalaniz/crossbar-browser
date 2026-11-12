@@ -96,8 +96,15 @@ export const TOOLS = {
   }),
   click: def({
     name: "click",
-    description: "Click the element with this ref. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
-    input: z.object({ ref: z.string().regex(/^e\d+$/).describe("Element ref from read, e.g. e12.") }),
+    description:
+      "Click an element: by ref from read (preferred), or by its visible text when it has no ref (e.g. an option in a custom menu). Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
+    input: z
+      .object({
+        ref: z.string().regex(/^e\d+$/).optional().describe("Element ref from read, e.g. e12."),
+        text: z.string().min(1).max(200).optional().describe("Fallback: the visible text of what to click, as a person reads it (exact match first, then partial)."),
+        nth: z.number().int().min(0).max(50).default(0).describe("With text: which match, if several (0 = first on the page)."),
+      })
+      .refine((v) => !!v.ref || !!v.text, { message: "Give a ref or a text." }),
     minToken: "read",
     class: "act",
   }),

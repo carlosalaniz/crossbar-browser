@@ -7,5 +7,6 @@
 
 - During takeover, the tab a person controls is leased to them. Agent calls aimed at that tab return busy; the session that hit the challenge, and work that depends on it, waits (`wait_for_ticket`).
 - Unrelated agent work continues.
-- Agent sessions in the same profile each get their own window, so the person's tab and an agent's tab are both in front of their own window. If a browser build hides covered windows, the fallback is: before acting, the agent's tab comes forward, except while a person holds a lease in that window, when the agent waits.
+- Every tab Crossbar opens gets its own window, so the person's tab and each agent's tab are each in front of their own window.
+- Measured under Xvfb (Chromium 156, 12 Nov 2026): a window covered by another reports `visibilityState: "hidden"` and stops animation frames; side by side, both stay visible; with `--disable-backgrounding-occluded-windows`, a covered window stays visible. Crossbar launches with that flag. The "bring the tab forward" fallback isn't needed.
 - The live view never brings a tab forward that someone else holds.

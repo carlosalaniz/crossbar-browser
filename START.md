@@ -4,7 +4,7 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
 
 ## Status (12 Nov 2026, stage 2 session)
 
-Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, an app that's easy to use). Done in PRs #23–#34:
+Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, an app that's easy to use). Done in PRs #23–#39:
 
 - **Decisions:** ADRs 0015 (device stays fixed through takeover; honest software rendering), 0016 (human input transport), 0017 (takeover concurrency), 0018 (admin/admin on first start, password-only sign-in), 0019 (fewer, clearer notifications). Credential-field typing is allowed (README and threat model match the code).
 - **Baseline fixed:** main had 5 failing tests; adapter-listed telemetry now passes (it fell through to hold).
@@ -17,8 +17,11 @@ Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, a
 - **UI:** desktop sidebar, two-column approvals, sticky one-tap Approve on phones, installable manifest.
 - **Environment:** headful default, 1920×1080 container screen, owner's TZ and language (S14, S32, S33). Idle browsers stop after 10 min (RAM).
 - **Compatibility:** ad blocking pauses during takeover (S22); service/shared-worker writes judged by their page's tabs, strictest wins (S21).
+- **Diagnostics:** `/pages/diag` on the test site (`http://testsite.test:8090/pages/diag` in the dev stack) shows what a page can see; an e2e test expects no flags after an agent reads, types and clicks.
+- **Measured in the browser image:** WebGL was **missing** entirely; now Mesa llvmpipe (`ANGLE (Mesa, llvmpipe …, OpenGL 4.5)`) via `--ignore-gpu-blocklist` (S31). A covered window under Xvfb reports `hidden`; every tab now gets its own window and `--disable-backgrounding-occluded-windows` keeps them visible (ADR 0017). One Chrome for Testing pin in `browser/chrome-build.json` (S34).
+- **Proposed ADRs 0020–0023** (owner review): scoped WebSockets (S24, needs the owner's decision), permission prompts (S28), stock features (S29), agent popups (S30).
 
-**Next (in order):** diagnostic page `diag.test` (signal plan B) and baseline snapshots, including the Xvfb window-visibility check for ADR 0017; takeover over WebSocket with server-side rate limit and the foreground lease (S10); llvmpipe in the browser image (S31) and pinned Chromium (S34); challenge-vendor read allowances (S19/S20); PR H ADRs (WebSocket allowance S24 needs the owner); identical-repeat ticket joining and 5-minute challenge reminder (ADR 0019).
+**Next (in order):** owner review of ADRs 0020–0023, then implement the accepted ones; takeover over WebSocket with a per-connection rate limit (ADR 0016); challenge-vendor read allowances from saved fixtures (S19/S20); 5-minute challenge reminder (ADR 0019); container baseline snapshot of `/pages/diag` committed under `docs/`; a cap on concurrent browsers if households grow.
 
 ## Status (11 Nov 2026, end of first build session)
 

@@ -758,6 +758,9 @@ describe("sensitive categories are account permissions (ADR 0014)", () => {
     assert.deepEqual(list.map((x) => x.id), ["banking", "mail", "passwords", "cloud", "signin", "government"]);
     const init = (await (await fetch(`${t.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${t.token("alice")}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) })).json()) as { result: { instructions: string } };
     assert.match(init.result.instructions, /call ask_person instead of asking in chat/);
+    // Agents try instead of assuming a site is blocked (live: an agent refused Gmail although mail was on).
+    assert.match(init.result.instructions, /Never decide yourself that a site is off-limits/);
+    assert.doesNotMatch(init.result.instructions, /off for agents until/);
   });
 });
 

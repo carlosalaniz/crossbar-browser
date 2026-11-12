@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The web app, driven in a real browser against the real server, auth and agent browser.
-// Covers: setup, connect, an agent's held comment approved from the approval page, and a login
+// Covers: admin login and password change, connect, an agent's held comment approved from the approval page, and a login
 // wall resolved through takeover with the verifier.
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -27,7 +27,6 @@ describe("web app flow", { skip: skipReason }, () => {
   let app: ReturnType<typeof createApp>;
   let ui: LaunchedBrowser;
   let origin: string;
-  let setupCode = "";
   let s = "";
   before(async () => {
     execFileSync(process.execPath, [resolve(import.meta.dirname, "../../scripts/build-web.mjs")]);
@@ -41,8 +40,8 @@ describe("web app flow", { skip: skipReason }, () => {
     probe.close();
     origin = `http://localhost:${port}`;
     const services = buildServices({ dataDir: dir, pool, appOrigin: origin, pace: { minIntervalMs: 1000 }, settleMs: 1500 });
-    const auth = new Auth(services.db, { appOrigin: origin, log: (m) => (setupCode = /code: (\S+)/.exec(m)?.[1] ?? setupCode) });
-    auth.ensureSetupCode();
+    const auth = new Auth(services.db, { appOrigin: origin });
+    await auth.ensureDefaultOwner();
     app = createApp({ services, tokens: services.tokens, auth, version: "test", appOrigin: origin, webRoot: resolve(import.meta.dirname, "../../web/dist") });
     await new Promise<void>((r) => app.server.listen(port, "127.0.0.1", r));
     ui = await launchChrome({ extensions: [], extraArgs: noSandbox });
@@ -79,14 +78,23 @@ describe("web app flow", { skip: skipReason }, () => {
   const hasText = (t: string) => `document.body.innerText.includes(${JSON.stringify(t)})`;
 
   let token = "";
-  test("setup, then connect an agent", async () => {
+  test("log in as admin/admin, change the password, then connect an agent", async () => {
     await ui.cdp.send("Page.navigate", { url: `${origin}/` }, s);
-    await until(hasText("setup code"));
-    await setVal('input[placeholder^="Setup code"]', setupCode);
-    await setVal('input[placeholder="Username"]', "carlos");
-    await setVal("input[type=password]", "a long password here");
-    await clickText("Create account");
+    await until(hasText("Log in as admin"));
+    await setVal('input[placeholder="Username"]', "admin");
+    await setVal("input[type=password]", "admin");
+    await clickText("Log in");
     await until(hasText("Nothing needs you"));
+    await until(hasText("default password"));
+    await ev(`location.hash = '#/settings'`);
+    await until(hasText("Change password"));
+    await setVal('input[placeholder="Current password"]', "admin");
+    await setVal('input[placeholder="New password"]', "a long password here");
+    await clickText("Change password");
+    await until(hasText("Password changed"));
+    await ev(`location.hash = '#/'`);
+    await until(hasText("Nothing needs you"));
+    assert.doesNotMatch(String(await ev("document.body.innerText")), /default password/);
     await ev(`location.hash = '#/connect'`);
     await until(hasText("Create token"));
     await setVal('input[placeholder^="Agent name"]', "claude-code");
@@ -162,28 +170,14 @@ describe("web app flow", { skip: skipReason }, () => {
     assert.equal(after.data.profile, "signed_in");
   });
 
-  test("passkeys: register in settings, log out, log back in with the passkey", async () => {
-    // Chrome's virtual authenticator stands in for Face ID / a security key.
-    await ui.cdp.send("WebAuthn.enable", { enableUI: false }, s);
-    await ui.cdp.send(
-      "WebAuthn.addVirtualAuthenticator",
-      { options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } },
-      s,
-    );
+  test("log out, then back in with the new password", async () => {
     await ev(`location.hash = '#/settings'`);
-    await until(hasText("Add a passkey"));
-    await clickText("Add a passkey");
-    await until(hasText("Recovery codes"));
-    const codes = String(await ev(`[...document.querySelectorAll('pre')].map(p => p.textContent).find(t => /^[a-z0-9]{4}-/.test(t)) ?? ''`));
-    assert.equal(codes.split("\n").length, 10);
-    await ev(`location.hash = '#/'; location.hash = '#/settings'`);
-    await until(hasText("1 passkey(s)"));
+    await until(hasText("Log out"));
     await clickText("Log out");
-    await until(hasText("Log in with a passkey"));
-    await clickText("Log in with a passkey");
-    await until(hasText("Inbox"));
-    const me = await ev(`fetch('/api/me', { headers: { 'x-crossbar': '1' } }).then(r => r.json())`);
-    assert.equal((me as { username: string; twoFactor: boolean }).username, "carlos");
-    assert.equal((me as { twoFactor: boolean }).twoFactor, true);
+    await until(hasText("Log in as admin"));
+    await setVal('input[placeholder="Username"]', "admin");
+    await setVal("input[type=password]", "a long password here");
+    await clickText("Log in");
+    await until(hasText("Nothing needs you"));
   });
 });

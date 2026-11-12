@@ -29,13 +29,11 @@ describe("route table", () => {
     assert.deepEqual(pub.sort(), [
       "GET /",
       "GET /api/openapi.json",
-      "GET /api/setup",
       "GET /assets/:file",
       "GET /healthz",
       "POST /api/login",
       "POST /api/passkey/login/options",
       "POST /api/passkey/login/verify",
-      "POST /api/setup",
       "POST /api/tickets/:id/deny-link",
     ].sort());
   });

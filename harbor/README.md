@@ -6,7 +6,7 @@ Install from this repository as a git source:
 harbor sources add https://github.com/carlosalaniz/crossbar-browser
 ```
 
-After it starts, open the app and enter the setup code from the app's logs.
+After it starts, open the app and log in as `admin` with password `admin`. **Change the password in Settings before the app is reachable outside your network.**
 
 ## How it differs from `deploy/compose.yaml`
 

@@ -127,6 +127,9 @@ export function makeRecoveryCodes(n = 10): string[] {
   );
 }
 
+export const DEFAULT_USER = "admin";
+export const DEFAULT_PASSWORD = "admin";
+
 // ---------- the auth service ----------
 
 export interface AuthOptions {
@@ -170,20 +173,35 @@ export class Auth {
     return !!this.db.prepare("SELECT 1 FROM users LIMIT 1").get();
   }
 
-  /** First run: a setup code is printed in the logs; the first account needs it. */
-  ensureSetupCode(): string | null {
-    if (this.hasUsers() && !this.meta("reset_owner_code")) return null;
-    const code = randomBytes(9).toString("base64url");
-    this.setMeta(this.hasUsers() ? "reset_owner_code" : "setup_code", sha(code));
-    this.o.log?.(`\n  Crossbar ${this.hasUsers() ? "owner reset" : "setup"} code: ${code}\n  Open ${this.o.appOrigin} and enter it.\n`);
-    return code;
+  /**
+   * First run (ADR 0018): no users yet, so create the owner `admin` with password `admin`.
+   * Every start warns while the owner still has the default password.
+   */
+  async ensureDefaultOwner(): Promise<void> {
+    if (!this.hasUsers()) {
+      const id = randomBytes(9).toString("base64url");
+      this.db.prepare("INSERT INTO users (id, username, password_hash, is_owner, created_at) VALUES (?, ?, ?, 1, ?)").run(id, DEFAULT_USER, await hashPassword(DEFAULT_PASSWORD), now());
+      this.setMeta("default_password_user", id);
+      this.o.log?.(`\n  Created the owner account: username "${DEFAULT_USER}", password "${DEFAULT_PASSWORD}". Open ${this.o.appOrigin} and log in.`);
+    }
+    if (this.meta("default_password_user")) this.o.log?.(`  WARNING: the owner still has the default password. Change it in Settings before this is reachable outside your network.\n`);
   }
 
-  /** `reset-owner`, run inside the container: the next setup with this code resets the owner's password and 2FA. */
-  resetOwner(): string {
-    const code = randomBytes(9).toString("base64url");
-    this.setMeta("reset_owner_code", sha(code));
-    return code;
+  /** `reset-owner`, run inside the container: the owner's password goes back to the default and 2FA is removed. */
+  async resetOwner(): Promise<string> {
+    const owner = this.db.prepare("SELECT id, username FROM users WHERE is_owner = 1 ORDER BY created_at LIMIT 1").get() as { id: string; username: string } | undefined;
+    if (!owner) {
+      await this.ensureDefaultOwner();
+      return DEFAULT_USER;
+    }
+    this.db.prepare("UPDATE users SET password_hash = ?, totp_secret = NULL WHERE id = ?").run(await hashPassword(DEFAULT_PASSWORD), owner.id);
+    for (const t of ["passkeys", "recovery_codes", "web_sessions"]) this.db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(owner.id);
+    this.setMeta("default_password_user", owner.id);
+    return owner.username;
+  }
+
+  private defaultPassword(userId: string): boolean {
+    return this.meta("default_password_user") === userId;
   }
 
   // ---- sessions ----
@@ -309,29 +327,6 @@ export class Auth {
 
   get handlers(): Record<string, Handler> {
     return {
-      "GET /api/setup": () => ({ open: !this.hasUsers() || !!this.meta("reset_owner_code"), reset: this.hasUsers() && !!this.meta("reset_owner_code") }),
-      "POST /api/setup": async (c) => {
-        const b = c.body as { code: string; username: string; password: string };
-        this.throttle(`setup:${c.req.socket.remoteAddress}`);
-        const resetting = this.hasUsers();
-        const stored = this.meta(resetting ? "reset_owner_code" : "setup_code");
-        if (!stored || !timingSafeEqual(Buffer.from(stored), Buffer.from(sha(b.code.trim())))) throw new AuthError(403, "Wrong setup code. It's in the app's logs.");
-        let userId: string;
-        if (resetting) {
-          const owner = this.db.prepare("SELECT id, username FROM users WHERE is_owner = 1 ORDER BY created_at LIMIT 1").get() as { id: string; username: string };
-          userId = owner.id;
-          this.db.prepare("UPDATE users SET password_hash = ?, totp_secret = NULL WHERE id = ?").run(await hashPassword(b.password), userId);
-          this.db.prepare("DELETE FROM passkeys WHERE user_id = ?").run(userId);
-          this.db.prepare("DELETE FROM recovery_codes WHERE user_id = ?").run(userId);
-          this.db.prepare("DELETE FROM web_sessions WHERE user_id = ?").run(userId);
-          this.setMeta("reset_owner_code", null);
-        } else {
-          userId = await this.createUser(b.username, b.password, true);
-          this.setMeta("setup_code", null);
-        }
-        this.startSession(c.res, userId, true);
-        return { ok: true, reset: resetting };
-      },
       "POST /api/login": async (c) => {
         const b = c.body as { username: string; password: string; totp?: string; recoveryCode?: string };
         this.throttle(`login:${b.username.toLowerCase()}:${c.req.socket.remoteAddress}`);
@@ -373,7 +368,7 @@ export class Auth {
         const u = this.db.prepare("SELECT totp_secret FROM users WHERE id = ?").get(h.userId) as { totp_secret: string | null };
         const passkeys = (this.db.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?").get(h.userId) as { n: number }).n;
         const recovery = (this.db.prepare("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL").get(h.userId) as { n: number }).n;
-        return { ...h, totp: !!u.totp_secret, passkeys, recoveryCodesLeft: recovery };
+        return { ...h, totp: !!u.totp_secret, passkeys, recoveryCodesLeft: recovery, defaultPassword: this.defaultPassword(h.userId) };
       },
       "POST /api/me/password": async (c) => {
         const b = c.body as { current: string; next: string };
@@ -381,6 +376,7 @@ export class Auth {
         if (!(await verifyPassword(b.current, u.password_hash))) throw new AuthError(401, "Current password is wrong.");
         if (c.human!.twoFactor && !c.human!.fresh) throw new AuthError(401, "fresh_factor_required");
         this.db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(await hashPassword(b.next), c.human!.userId);
+        if (this.defaultPassword(c.human!.userId)) this.setMeta("default_password_user", null);
         return { ok: true };
       },
       "POST /api/me/totp/begin": (c) => {

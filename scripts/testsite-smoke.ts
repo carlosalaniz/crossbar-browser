@@ -2,15 +2,10 @@
 // Drives a running dev stack (npm run dev) through MCP and compares what Crossbar does on opening each
 // test-site scenario with scenarios.json. Only scenarios whose headline outcome shows on open
 // (read, blocked, blocked:<kind>) are checked; the rest need an action (typing, posting) to observe.
-// Usage: node scripts/testsite-smoke.ts <setup-code-or-password> [origin]
+// Usage: node scripts/testsite-smoke.ts [origin]. Logs in as CROSSBAR_USER / CROSSBAR_PASSWORD (default admin / admin).
 import { SCENARIOS, type Outcome } from "../testsite/src/scenarios.ts";
 
-const secret = process.argv[2];
-const ORIGIN = process.argv[3] ?? "http://localhost:8080";
-if (!secret) {
-  console.error("usage: node scripts/testsite-smoke.ts <setup-code> [origin]");
-  process.exit(2);
-}
+const ORIGIN = process.argv[2] ?? "http://localhost:8080";
 let cookie = "";
 async function human(method: string, path: string, body?: unknown) {
   const r = await fetch(ORIGIN + path, { method, headers: { "content-type": "application/json", "x-crossbar": "1", cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -18,10 +13,8 @@ async function human(method: string, path: string, body?: unknown) {
   if (sc) cookie = sc.split(";")[0]!;
   return { status: r.status, json: (await r.json().catch(() => null)) as Record<string, unknown> };
 }
-// Same account as scripts/stack-smoke.ts, so either script can run first on a fresh stack.
-const user = { username: process.env.SMOKE_USER ?? "smoke", password: process.env.SMOKE_PASSWORD ?? "a long password here" };
-const setup = await human("POST", "/api/setup", { code: secret, ...user });
-if (setup.status !== 200) await human("POST", "/api/login", user);
+const user = { username: process.env.CROSSBAR_USER ?? "admin", password: process.env.CROSSBAR_PASSWORD ?? "admin" };
+if ((await human("POST", "/api/login", user)).status !== 200) throw new Error("login failed; set CROSSBAR_USER / CROSSBAR_PASSWORD");
 const tok = (await human("POST", "/api/tokens", { agentName: "testsite-smoke", kind: "read" })).json.secret as string;
 
 let sid = "";

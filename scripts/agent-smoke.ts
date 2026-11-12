@@ -27,12 +27,11 @@ let log = "";
 stack.stdout.on("data", (d) => (log += d));
 stack.stderr.on("data", (d) => (log += d));
 process.on("exit", () => stack.kill());
-for (let i = 0; i < 100 && !/setup code: \S+/.test(log); i++) await sleep(100);
-const code = /setup code: (\S+)/.exec(log)?.[1];
-if (!code) throw new Error(`stack didn't start:\n${log}`);
+for (let i = 0; i < 100 && !/Crossbar \S+ on /.test(log); i++) await sleep(100);
+if (!/Crossbar \S+ on /.test(log)) throw new Error(`stack didn't start:\n${log}`);
 await sleep(500);
 
-// ---- the person: setup, token, site level ----
+// ---- the person: login, token, site level ----
 let cookie = "";
 async function human(method: string, path: string, body?: unknown) {
   const r = await fetch(ORIGIN + path, { method, headers: { "content-type": "application/json", "x-crossbar": "1", cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -41,7 +40,7 @@ async function human(method: string, path: string, body?: unknown) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return r.json() as Promise<any>;
 }
-await human("POST", "/api/setup", { code, username: "carlos", password: "a long password here" });
+await human("POST", "/api/login", { username: "admin", password: "admin" });
 const { secret } = (await human("POST", "/api/tokens", { agentName: "smoke-agent", kind: "act" })) as { secret: string };
 // The person decided the test site may be read with their login (it plays the part of a signed-in site).
 await human("PUT", "/api/sites", { pattern: "testsite.test", level: "read_as_you" });

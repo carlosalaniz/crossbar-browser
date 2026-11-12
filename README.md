@@ -44,10 +44,9 @@ git clone https://github.com/carlosalaniz/crossbar-browser && cd crossbar-browse
 printf 'CROSSBAR_BROWSER_SECRET=%s\nCROSSBAR_ORIGIN=http://localhost:8080\n' "$(openssl rand -base64 36)" > deploy/.env
 # Port 8080 taken? Add CROSSBAR_PORT=8081 and CROSSBAR_ORIGIN=http://localhost:8081 to deploy/.env.
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
-docker compose -f deploy/compose.yaml logs app | grep "setup code"
 ```
 
-Open http://localhost:8080, enter the setup code and create your account. Put it behind HTTPS (a reverse proxy, Tailscale, or Harbor) before using it from your phone, and set `CROSSBAR_ORIGIN` to that URL.
+Open http://localhost:8080 and log in as `admin` / `admin`, then change the password in Settings before the app is reachable outside your network. Put it behind HTTPS (a reverse proxy, Tailscale, or Harbor) before using it from your phone, and set `CROSSBAR_ORIGIN` to that URL.
 
 ### Harbor
 

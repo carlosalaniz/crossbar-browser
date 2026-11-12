@@ -20,7 +20,6 @@ Crossbar refuses to become a scraper. Pull requests that add any of these are cl
 - bulk crawling, or mass extraction on a schedule;
 - getting around paywalls or access you don't have;
 - agent tools for eval, raw CDP, or exporting cookies;
-- agents typing into password, one-time-code or card fields.
 
 ## How it works
 

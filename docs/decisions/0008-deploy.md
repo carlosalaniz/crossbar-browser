@@ -1,6 +1,6 @@
 # 0008: Deployment
 
-- **Status:** Accepted
+- **Status:** Accepted; login details superseded by ADR 0018
 - **Date:** 2026-11-11
 
 ## Decision

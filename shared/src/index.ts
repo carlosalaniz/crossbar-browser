@@ -212,11 +212,20 @@ export const InviteBody = z.object({ username: z.string().min(1).max(64), passwo
 export const TotpEnableBody = z.object({ secret: z.string(), code: z.string() });
 export const PasswordBody = z.object({ current: z.string(), next: z.string().min(10).max(256) });
 export const TakeoverInput = z.object({
-  type: z.enum(["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel", "keyDown", "keyUp", "char", "insertText"]),
+  type: z.enum(["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel", "keyDown", "keyUp", "char", "insertText", "touchStart", "touchMove", "touchEnd", "touchCancel"]),
+  /** The tab this event was aimed at. If control moved to another tab meanwhile, the event is refused, never replayed there (ADR 0016). */
+  tab: z.string().max(64).optional(),
   x: z.number().optional(),
   y: z.number().optional(),
+  deltaX: z.number().optional(),
   deltaY: z.number().optional(),
-  button: z.enum(["left", "right", "none"]).optional(),
+  button: z.enum(["left", "right", "middle", "none"]).optional(),
+  /** Buttons held during a move (1 left, 2 right, 4 middle), so drags select text and move sliders. */
+  buttons: z.number().int().min(0).max(7).optional(),
+  clickCount: z.number().int().min(0).max(3).optional(),
+  /** Alt 1, Ctrl 2, Meta 4, Shift 8. */
+  modifiers: z.number().int().min(0).max(15).optional(),
+  touchPoints: z.array(z.object({ x: z.number(), y: z.number(), id: z.number().int().min(0).max(9) })).max(5).optional(),
   key: z.string().max(32).optional(),
   code: z.string().max(32).optional(),
   text: z.string().max(2000).optional(),

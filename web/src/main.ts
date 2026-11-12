@@ -2,7 +2,8 @@
 // Crossbar web app: phone-first. Approvals, takeover, live view, connect, sites, activity, settings.
 // Talks to /api only (Charter). Page text and agent reasons are shown as quotes, marked unverified.
 import { startAuthentication } from "@simplewebauthn/browser";
-import { parseRoute, headline, SCOPE_LABEL, toPage, timeLeft, levelLabel, originOf, type Route, type TicketView } from "./logic.ts";
+import { parseRoute, headline, SCOPE_LABEL, timeLeft, levelLabel, originOf, type Route, type TicketView } from "./logic.ts";
+import { takeoverWindow } from "./takeover.ts";
 
 // ---------- tiny DOM helper ----------
 type Child = Node | string | null | undefined | false | Child[];
@@ -354,100 +355,7 @@ function stream(tab: string, img: HTMLImageElement, onUrl: (u: string) => void, 
 }
 
 async function takeoverScreen(id: string) {
-  const err = h("p", { class: "error" });
-  let claim: TicketView & { tab: string; origin: string; takeoverTab?: string | null };
-  try {
-    claim = await api("POST", `/api/tickets/${id}/claim`);
-  } catch (e) {
-    return render(shell("Take control", errorBox(e), h("a", { class: "btn", href: `#/tickets/${id}` }, "Back")));
-  }
-  const img = h("img", { class: "screen", alt: "Live view of the page you're controlling" }) as HTMLImageElement;
-  const bar = h("div", { class: "origin" }, h("span", { class: "dot" }), claim.origin);
-  const warn = h("p", { class: "warn small", hidden: true });
-  let css = { w: 390, h: 844 };
-  const send = (ev: Record<string, unknown>) => api("POST", `/api/tickets/${id}/input`, ev).catch((e) => (err.textContent = (e as Error).message));
-  img.addEventListener("click", async (e) => {
-    const r = img.getBoundingClientRect();
-    const p = toPage({ x: e.clientX - r.left, y: e.clientY - r.top }, { width: r.width, height: r.height }, { width: css.w, height: css.h });
-    await send({ type: "mousePressed", x: p.x, y: p.y, button: "left" });
-    await send({ type: "mouseReleased", x: p.x, y: p.y, button: "left" });
-  });
-  // A native text field, so your password manager can fill it. Send inserts the whole string at once
-  // (Input.insertText), not as keystrokes, so the page sees no key events (docs/bot-detection.md E).
-  const field = h("input", { class: "input", placeholder: "Type here, then Send", autocomplete: "current-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false" }) as HTMLInputElement;
-  const onUrl = (u: string) => {
-    // The real origin is drawn outside the stream, so the page can't fake it.
-    bar.lastChild!.textContent = originOf(u);
-    const differs = originOf(u) !== claim.origin;
-    warn.hidden = !differs;
-    warn.textContent = differs ? `You're now on ${originOf(u)}, not ${claim.origin}. Check before typing a password.` : "";
-  };
-  let current = claim.tab;
-  let stopStream = stream(current, img, onUrl, (m) => (css = { w: m.w, h: m.h }));
-  const stop = () => stopStream();
-  // A sign-in window the page opens becomes what you're driving; follow it, and come back when it closes.
-  const follow = setInterval(async () => {
-    const t = await api<TicketView & { takeoverTab: string | null }>("GET", `/api/tickets/${id}`).catch(() => null);
-    if (t?.takeoverTab && t.takeoverTab !== current) {
-      current = t.takeoverTab;
-      stopStream();
-      stopStream = stream(current, img, onUrl, (m) => (css = { w: m.w, h: m.h }));
-    }
-  }, 1000);
-  cleanup.push(() => clearInterval(follow));
-  cleanup.push(stop);
-  render(
-    shell(
-      "Take control",
-      bar,
-      warn,
-      h("div", { class: "screen-wrap" }, img),
-      h("div", { class: "row" }, field, h("button", { class: "btn", onclick: async () => (await send({ type: "insertText", text: field.value }), (field.value = "")) }, "Send")),
-      h(
-        "div",
-        { class: "row keys" },
-        ...[["Enter", "Enter", "\r"], ["⌫", "Backspace", ""], ["Tab", "Tab", ""]].map(([label, key, text]) => h("button", { class: "btn small", onclick: async () => (await send({ type: "keyDown", key, code: key, text }), await send({ type: "keyUp", key, code: key })) }, label!)),
-        h("button", { class: "btn small", onclick: () => send({ type: "mouseWheel", x: css.w / 2, y: css.h / 2, deltaY: -400 }) }, "↑"),
-        h("button", { class: "btn small", onclick: () => send({ type: "mouseWheel", x: css.w / 2, y: css.h / 2, deltaY: 400 }) }, "↓"),
-      ),
-      h("button", {
-        class: "btn ghost small",
-        onclick: async () => {
-          await api("POST", `/api/tickets/${id}/not-a-wall`).catch((e) => (err.textContent = (e as Error).message));
-          location.hash = "#/";
-        },
-      }, "This isn't a captcha or login — let the agent continue"),
-      h("button", {
-        class: "btn primary",
-        onclick: async () => {
-          try {
-            const r = await api<{ verified: boolean; still?: string }>("POST", `/api/tickets/${id}/done`);
-            if (r.verified) location.hash = "#/";
-            else {
-              // The verifier reopened the ticket: offer to pick it up again.
-              for (const c of cleanup) c();
-              cleanup = [];
-              err.replaceChildren(
-                `It still looks like a ${r.still} page. `,
-                h("button", { class: "btn small", onclick: () => void takeoverScreen(id) }, "Take control again"),
-                " ",
-                h("button", {
-                  class: "btn small",
-                  onclick: async () => {
-                    await api("POST", `/api/tickets/${id}/not-a-wall`);
-                    location.hash = "#/";
-                  },
-                }, "It's not a wall — continue"),
-              );
-            }
-          } catch (e) {
-            err.textContent = (e as Error).message;
-          }
-        },
-      }, "I'm done"),
-      err,
-    ),
-  );
+  await takeoverWindow(id, { h, api, render, onCleanup: (fn) => cleanup.push(fn) });
 }
 
 async function liveScreen() {

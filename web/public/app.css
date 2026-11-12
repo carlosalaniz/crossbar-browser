@@ -88,3 +88,45 @@ details.field summary { cursor: pointer; }
 details.field code { display: block; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
 .warn-banner { display: block; margin: 8px 16px 0; color: inherit; text-decoration: none; }
 form.stack { display: flex; flex-direction: column; gap: 8px; }
+
+/* ---------- take control: the remote page as a window ---------- */
+.tk { position: fixed; inset: 0; display: flex; flex-direction: column; background: #0b0c0f; color: #e6e9ef; z-index: 10; }
+.tk-msg { margin: auto; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.tk-bar { display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: #16181d; border-bottom: 1px solid #262a33; }
+.tk-close { color: #e6e9ef; text-decoration: none; font-size: 18px; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; }
+.tk-close:hover { background: #262a33; }
+.tk-origin { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; background: #0b0c0f; border: 1px solid #2a2f3a; border-radius: 999px; padding: 6px 12px; font: 13px/1.2 ui-monospace, "SF Mono", Menlo, monospace; }
+.tk-origin-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-status { font-size: 12px; color: #8b93a3; white-space: nowrap; }
+.tk-banner { background: #3b2a0c; color: #f6c46b; padding: 8px 12px; font-size: 14px; }
+.tk-view { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; touch-action: none; outline: none; user-select: none; -webkit-user-select: none; }
+.tk-view:focus-visible { box-shadow: inset 0 0 0 2px #5b78ff; }
+.tk-stage { transform-origin: 0 0; will-change: transform; display: flex; }
+.tk-img { display: block; background: #fff; cursor: default; -webkit-user-drag: none; image-rendering: auto; }
+.tk-error { color: #ff8a80; padding: 0 12px; min-height: 0; }
+.tk-error:empty { display: none; }
+.tk-actions { display: flex; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); background: #16181d; border-top: 1px solid #262a33; }
+.tk-actions .tk-btn { flex: 1; }
+.tk-more { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; background: #16181d; }
+.tk-more[hidden] { display: none; }
+.tk-btn { font: inherit; font-weight: 600; font-size: 15px; min-height: 44px; padding: 8px 14px; border-radius: 10px; border: 1px solid #2f3440; background: #20232b; color: #e6e9ef; cursor: pointer; }
+.tk-btn.small { min-height: 32px; font-size: 13px; }
+.tk-btn.primary { background: #3b5bdb; border-color: #3b5bdb; color: #fff; }
+.tk-btn.hint { border-color: #5b78ff; box-shadow: 0 0 0 2px rgba(91, 120, 255, 0.35); }
+/* The typing field: present and focusable (so the phone keyboard opens), out of the way. */
+.tk-kbd { position: fixed; left: 12px; right: 12px; bottom: calc(68px + env(safe-area-inset-bottom)); opacity: 0; height: 40px; font-size: 16px; pointer-events: none; border-radius: 10px; border: 1px solid #5b78ff; background: #0b0c0f; color: #e6e9ef; padding: 0 12px; }
+.tk-kbd.on { opacity: 1; pointer-events: auto; }
+@media (min-width: 900px) and (pointer: fine) {
+  /* Desktop: a window on a dimmed backdrop, page at its real size when it fits. */
+  .tk { background: rgba(10, 11, 14, 0.92); padding: 24px; }
+  .tk > * { width: min(100%, 1360px); margin-inline: auto; }
+  .tk-bar { border-radius: 12px 12px 0 0; border: 1px solid #262a33; border-bottom: 0; }
+  .tk-view { background: #000; border-inline: 1px solid #262a33; }
+  .tk-actions { border-radius: 0 0 12px 12px; border: 1px solid #262a33; border-top: 0; justify-content: flex-end; }
+  .tk-actions .tk-btn { flex: 0 0 auto; }
+  .tk-kbd { display: none; }
+}
+.tk-hint { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); background: rgba(22, 24, 29, 0.92); color: #e6e9ef; font-size: 13px; padding: 8px 14px; border-radius: 999px; pointer-events: none; transition: opacity 0.6s; white-space: nowrap; }
+.tk-hint.gone { opacity: 0; }
+@media (pointer: coarse) { .tk-view { align-items: flex-start; } }
+@media (pointer: fine) { .tk-actions .tk-btn:first-child { display: none; } }

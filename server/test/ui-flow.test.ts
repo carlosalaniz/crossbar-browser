@@ -145,24 +145,28 @@ describe("web app flow", { skip: skipReason }, () => {
     await ev(`location.hash = '#/tickets/${r.ticket.id}'`);
     await until(hasText("needs you to log in"));
     await clickText("Take control");
-    await until(`(document.querySelector('.screen')?.src ?? '').startsWith('data:image/jpeg')`);
+    await until(`(document.querySelector('.tk-img')?.src ?? '').startsWith('data:image/jpeg')`);
     // The agent is paused while a person has control.
     assert.equal((await call("read")).state, "blocked");
     // Saying "done" on the login page itself is refused by the verifier.
-    await clickText("I'm done");
+    await clickText("Done");
     await until(hasText("still looks like a login page"));
     await clickText("Take control again");
-    await until(`(document.querySelector('.screen')?.src ?? '').startsWith('data:image/jpeg')`);
-    for (const step of ["Tab", "carlos", "Tab", "hunter2", "Enter"]) {
-      if (["Tab", "Enter"].includes(step)) await clickText(step);
-      else {
-        await setVal('input[placeholder="Type here, then Send"]', step);
-        await clickText("Send");
-      }
-      await sleep(250);
-    }
+    await until(`(document.querySelector('.tk-img')?.src ?? '').startsWith('data:image/jpeg')`);
+    // The phone keyboard field forwards what is typed as it's typed (here, a word at a time).
+    const typeKbd = (v: string) => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.value = ${JSON.stringify(v)}; k.dispatchEvent(new Event('input')); return true; })()`);
+    const clearKbd = () => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })); return true; })()`);
+    await clickText("Tab");
+    await sleep(250);
+    await typeKbd("carlos");
+    await sleep(250);
+    await clearKbd();
+    await sleep(250);
+    await typeKbd("hunter2");
+    await sleep(250);
+    await clickText("Enter");
     await sleep(800);
-    await clickText("I'm done");
+    await clickText("Done");
     await until(`location.hash === '#/'`);
     const w = (await call("wait_for_ticket", { ticket: r.ticket.id, timeoutSeconds: 2 })) as { data: { state: string } };
     assert.equal(w.data.state, "resolved");

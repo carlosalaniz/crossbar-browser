@@ -305,9 +305,14 @@ export function createApp(o: AppOptions) {
       const t = requireTicket(c);
       const tk = takeovers.get(t.id);
       if (!tk || t.state !== "claimed") throw new HttpError(409, "Not under takeover.");
-      // The popup may close between events; then the input goes to the claimed tab.
-      await tk.tab.input(c.body as z.infer<typeof TakeoverInput>).catch(() => tk.base.input(c.body as z.infer<typeof TakeoverInput>));
-      return { ok: true, url: await tk.tab.currentUrl().catch(() => tk.base.currentUrl().catch(() => "")) };
+      const ev = c.body as z.infer<typeof TakeoverInput>;
+      // Aimed at a tab that is no longer the one under control (a popup opened or closed): refuse, never
+      // replay it into the other tab (ADR 0016). The viewer drops its queue and follows.
+      if (ev.tab && ev.tab !== tk.tab.id) throw new HttpError(409, "tab_changed");
+      const { tab: _aimed, ...input } = ev;
+      await tk.tab.input(input);
+      const settled = input.type === "mouseReleased" || input.type === "touchEnd" || input.type === "keyUp";
+      return { ok: true, tab: tk.tab.id, url: await tk.tab.currentUrl().catch(() => ""), ...(settled ? { focus: await tk.tab.focusKind() } : {}) };
     },
     "POST /api/tickets/:id/done": async (c) => {
       const t = requireTicket(c);

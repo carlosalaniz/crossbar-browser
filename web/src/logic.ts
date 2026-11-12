@@ -122,3 +122,27 @@ export function originOf(url: string): string {
     return url;
   }
 }
+
+/**
+ * Takeover typing from a phone: the hidden field's old and new value as Backspaces plus inserted text.
+ * Works for keyboards that compose whole words (Android), autocorrect, and password-manager fills.
+ */
+export function textEdit(before: string, after: string): { backspaces: number; insert: string } {
+  let i = 0;
+  while (i < before.length && i < after.length && before[i] === after[i]) i++;
+  return { backspaces: before.length - i, insert: after.slice(i) };
+}
+
+/** The size to draw the remote page at so it fits the view without distortion (never upscaled on desktop). */
+export function fitSize(page: { w: number; h: number }, view: { w: number; h: number }, allowUpscale = false): { w: number; h: number; scale: number } {
+  const scale = Math.min(view.w / page.w, view.h / page.h, allowUpscale ? Infinity : 1);
+  return { w: Math.round(page.w * scale), h: Math.round(page.h * scale), scale };
+}
+
+/** A point on the drawn image (client coordinates) to the remote page's CSS pixels. */
+export function clientToPage(p: { x: number; y: number }, drawn: { left: number; top: number; width: number; height: number }, page: { w: number; h: number }): { x: number; y: number } | null {
+  const rx = (p.x - drawn.left) / drawn.width;
+  const ry = (p.y - drawn.top) / drawn.height;
+  if (rx < 0 || ry < 0 || rx > 1 || ry > 1) return null;
+  return { x: Math.round(rx * page.w), y: Math.round(ry * page.h) };
+}

@@ -58,3 +58,31 @@ describe("takeover helpers", () => {
     expect(clientToPage({ x: 10, y: 300 }, { left: 0, top: 0, width: 390, height: 244 }, { w: 1280, h: 800 })).toBeNull();
   });
 });
+
+import { fieldAt, zoomToBox, keyFor } from "../src/logic.ts";
+
+describe("take-control typing", () => {
+  test("a tap finds the field under it, with a little slop", () => {
+    const fields = [{ x: 10, y: 100, w: 300, h: 40, kind: "text" }, { x: 10, y: 160, w: 300, h: 40, kind: "password" }];
+    expect(fieldAt(fields, { x: 50, y: 175 })?.kind).toBe("password");
+    expect(fieldAt(fields, { x: 50, y: 143 })?.kind).toBe("text");
+    expect(fieldAt(fields, { x: 500, y: 175 })).toBeNull();
+  });
+  test("zooming to a form fills the width and puts it in the upper part of the view", () => {
+    // A 400px-wide form at x=440 on a 1280px page drawn at 0.3 in a 390x400 view (keyboard up).
+    const z = zoomToBox({ x: 440, y: 200, w: 400, h: 300 }, { w: 390, h: 400 }, 0.3, { x: 0, y: 0 });
+    expect(z.s).toBeCloseTo(Math.min((390 * 0.94) / 120, (400 * 0.8) / 90), 5);
+    const centreX = z.x + z.s * (640 * 0.3);
+    const centreY = z.y + z.s * (350 * 0.3);
+    expect(centreX).toBeCloseTo(195, 5);
+    expect(centreY).toBeCloseTo(400 * 0.42, 5);
+    // Never zooms out below the whole page.
+    expect(zoomToBox({ x: 0, y: 0, w: 5000, h: 5000 }, { w: 390, h: 400 }, 0.3, { x: 0, y: 0 }).s).toBe(1);
+  });
+  test("characters map to key presses; the rest is left to text insertion", () => {
+    expect(keyFor("a")).toEqual({ key: "a", code: "KeyA", shift: false });
+    expect(keyFor("Q")).toEqual({ key: "Q", code: "KeyQ", shift: true });
+    expect(keyFor("@")).toEqual({ key: "@", code: "Digit2", shift: true });
+    expect(keyFor("é")).toBeNull();
+  });
+});

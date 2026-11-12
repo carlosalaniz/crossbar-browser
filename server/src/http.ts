@@ -316,10 +316,17 @@ export function createApp(o: AppOptions) {
       if (ev.tab && ev.tab !== tk.tab.id) throw new HttpError(409, "tab_changed");
       const { tab: _aimed, ...input } = ev;
       await withTimeout(tk.tab.input(input), 5000, "The page didn't take the input.");
-      const settled = input.type === "mouseReleased" || input.type === "touchEnd" || input.type === "keyUp";
+      // After input that can move focus or the page; not after every typed character.
+      const settled = input.type === "mouseReleased" || input.type === "touchEnd" || input.type === "mouseWheel" || (input.type === "keyUp" && (input.key === "Tab" || input.key === "Enter"));
       // A popup can close on this very input: never wait on a tab that's gone.
-      const focus = settled ? await withTimeout(tk.tab.focusKind(), 800, "").catch(() => "none" as const) : undefined;
-      return { ok: true, tab: tk.tab.id, url: await withTimeout(tk.tab.currentUrl(), 800, "").catch(() => ""), ...(focus ? { focus } : {}) };
+      const view = settled ? await withTimeout(tk.tab.viewState(), 800, "").catch(() => null) : null;
+      return { ok: true, tab: tk.tab.id, url: await withTimeout(tk.tab.currentUrl(), 800, "").catch(() => ""), ...(view ? { view } : {}) };
+    },
+    "GET /api/tickets/:id/view": async (c) => {
+      const t = requireTicket(c);
+      const tk = takeovers.get(t.id);
+      if (!tk || t.state !== "claimed") throw new HttpError(409, "Not under takeover.");
+      return { tab: tk.tab.id, view: await withTimeout(tk.tab.viewState(), 1500, "").catch(() => ({ focus: null, fields: [] })) };
     },
     "POST /api/tickets/:id/done": async (c) => {
       const t = requireTicket(c);

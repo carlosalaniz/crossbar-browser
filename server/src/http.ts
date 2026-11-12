@@ -68,6 +68,11 @@ export interface AppOptions {
   sessionIdleMs?: number;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  return Promise.race([p, new Promise<T>((_, reject) => (timer = setTimeout(() => reject(new HttpError(504, message || "timeout")), ms)))]).finally(() => clearTimeout(timer));
+}
+
 const MAX_BODY = 1_000_000;
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -310,9 +315,11 @@ export function createApp(o: AppOptions) {
       // replay it into the other tab (ADR 0016). The viewer drops its queue and follows.
       if (ev.tab && ev.tab !== tk.tab.id) throw new HttpError(409, "tab_changed");
       const { tab: _aimed, ...input } = ev;
-      await tk.tab.input(input);
+      await withTimeout(tk.tab.input(input), 5000, "The page didn't take the input.");
       const settled = input.type === "mouseReleased" || input.type === "touchEnd" || input.type === "keyUp";
-      return { ok: true, tab: tk.tab.id, url: await tk.tab.currentUrl().catch(() => ""), ...(settled ? { focus: await tk.tab.focusKind() } : {}) };
+      // A popup can close on this very input: never wait on a tab that's gone.
+      const focus = settled ? await withTimeout(tk.tab.focusKind(), 800, "").catch(() => "none" as const) : undefined;
+      return { ok: true, tab: tk.tab.id, url: await withTimeout(tk.tab.currentUrl(), 800, "").catch(() => ""), ...(focus ? { focus } : {}) };
     },
     "POST /api/tickets/:id/done": async (c) => {
       const t = requireTicket(c);

@@ -302,7 +302,7 @@ class CdpTab implements Tab {
 
   private async nav(): Promise<NavResult> {
     const url = await this.currentUrl();
-    const title = (await this.cdp.send("Runtime.evaluate", { expression: "document.title", returnByValue: true }, this.session).catch(() => null))?.result.value ?? "";
+    const title = (await this.b.scripts.inspect<string>(this.session, "document.title").catch(() => null)) ?? "";
     return { url, title: String(title), status: this.lastDoc.status };
   }
 
@@ -364,7 +364,14 @@ class CdpTab implements Tab {
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {
-    await typeInto(this.cdp, this.session, `[data-cb-ref="${ref.replace(/[^\w]/g, "")}"]`, text);
+    // By handle from the isolated world: the page's elements carry no ref attribute to select on (S02).
+    const objectId = await this.b.scripts.elementHandle(this.session, ref);
+    if (!objectId) throw new Error(`No element with ref ${ref}. Read the page again for fresh refs.`);
+    try {
+      await typeInto(this.cdp, this.session, { objectId }, text);
+    } finally {
+      await this.cdp.send("Runtime.releaseObject", { objectId }, this.session).catch(() => {});
+    }
     if (submit) {
       const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
       await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: "\r" }, this.session);
@@ -407,8 +414,7 @@ class CdpTab implements Tab {
       return out;
     })()`;
     type Probe = { pw: string[]; otp: boolean; containers: string[]; inForm: string[] };
-    const run = async (session: string): Promise<Probe | null> =>
-      ((await this.cdp.send("Runtime.evaluate", { expression: probe, returnByValue: true }, session).catch(() => null))?.result.value as Probe | undefined) ?? null;
+    const run = async (session: string): Promise<Probe | null> => (await this.b.scripts.inspect<Probe>(session, probe).catch(() => null)) ?? null;
     const probes: Probe[] = [];
     const main = await run(this.session);
     if (main) probes.push(main);
@@ -424,12 +430,11 @@ class CdpTab implements Tab {
       const p = await run(a.sessionId);
       if (p) probes.push(p);
     }
-    const r = await this.cdp.send(
-      "Runtime.evaluate",
-      { expression: `({ title: document.title, text: (document.body?.innerText ?? '').slice(0, 4000), len: (document.body?.innerText ?? '').length })`, returnByValue: true },
-      this.session,
-    );
-    const v = (r.result.value ?? {}) as { title: string; text: string; len: number };
+    const v = ((await this.b.scripts.inspect(this.session, `({ title: document.title, text: (document.body?.innerText ?? '').slice(0, 4000), len: (document.body?.innerText ?? '').length })`).catch(() => null)) ?? {}) as {
+      title: string;
+      text: string;
+      len: number;
+    };
     const pwOrigins = probes.flatMap((p) => p.pw);
     return {
       url: frameTree.frame.url,

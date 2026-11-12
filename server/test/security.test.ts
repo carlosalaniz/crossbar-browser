@@ -457,6 +457,26 @@ describe("challenges (ADR 0001)", () => {
     await t.close();
   });
 
+  test("leaving a takeover hands the ticket back; taking control again re-attaches; an abandoned one reopens", async () => {
+    const t = await startTestApp({ takeoverIdleMs: 150 });
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });
+    const c = await t.mcpClient(t.token("alice", "read"));
+    const id = (await c.call("open", { url: "https://www.reddit.com/login/" })).ticket!.id;
+    const first = await t.api("POST", `/api/tickets/${id}/claim`, { user: "alice" });
+    // A second claim (reload, second device) re-attaches to the same tab.
+    const again = await t.api("POST", `/api/tickets/${id}/claim`, { user: "alice" });
+    assert.equal(again.status, 200);
+    assert.equal(again.json.tab, first.json.tab);
+    // ✕: back to open, and it can be taken again.
+    assert.equal((await t.api("POST", `/api/tickets/${id}/release`, { user: "alice" })).json.state, "open");
+    assert.equal((await t.api("POST", `/api/tickets/${id}/claim`, { user: "alice" })).json.state, "claimed");
+    // Nobody looking: it reopens by itself.
+    await sleep(500);
+    assert.equal(t.services.tickets.get(id)!.state, "open");
+    await t.close();
+  });
+
   test("challenges can't be approved, only resolved through takeover", async () => {
     const t = await startTestApp();
     const tk = t.services.tickets.create({ userId: "alice", tokenId: null, agentName: "a", kind: "challenge", facts: {} });

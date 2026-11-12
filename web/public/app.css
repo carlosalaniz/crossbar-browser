@@ -169,4 +169,15 @@ form.stack { display: flex; flex-direction: column; gap: 8px; }
   .crop { max-height: none; }
 }
 .tabs .nav-brand.on { background: none; }
-@media (pointer: coarse) { .tk-view { align-items: flex-start; } }
+
+/* Phone take-control: a phone screen. The page fills the width and runs behind the buttons and the keyboard;
+   the buttons ride on top of the keyboard (JS sets the dock's bottom from visualViewport). */
+.tk-phone { height: 100%; bottom: 0; }
+.tk-phone .tk-view { display: block; margin: 0; border-radius: 0; background: #fff; }
+.tk-phone .tk-stage { position: absolute; left: 0; top: 0; transition: transform 0.16s ease-out; }
+.tk-phone .tk-hint { bottom: auto; top: 12px; }
+.tk-phone .tk-badge { bottom: auto; top: 8px; }
+.tk-dock { display: flex; flex-direction: column; gap: 0; }
+.tk-phone .tk-dock { position: absolute; left: 0; right: 0; bottom: 0; padding-top: 8px; background: rgba(11, 12, 15, 0.94); backdrop-filter: blur(6px); }
+.tk-eye { min-width: 44px; padding: 8px; }
+.tk-eye[hidden] { display: none; }

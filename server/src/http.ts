@@ -64,6 +64,8 @@ export interface AppOptions {
   /** Other origins the web app is served on (e.g. http://localhost:8080 next to a LAN address). CSRF accepts them. */
   extraOrigins?: string[];
   webRoot?: string;
+  /** A takeover with no input or view request for this long goes back to open (default 5 min). */
+  takeoverIdleMs?: number;
   /** Agent sessions idle longer than this are closed. */
   sessionIdleMs?: number;
 }
@@ -171,7 +173,20 @@ export function createApp(o: AppOptions) {
   const registry = new SessionRegistry(s);
   const live = new LiveView();
   // tab = what the person is driving now (the claimed tab, or a sign-in popup it opened); base = the claimed tab.
-  const takeovers = new Map<string, { tab: Tab; base: Tab; session: AgentSession }>();
+  const takeovers = new Map<string, { tab: Tab; base: Tab; session: AgentSession; lastSeen: number }>();
+  /** Ends a takeover and puts its ticket back to open, so it can be taken again (or by another device). */
+  const releaseTakeover = async (ticketId: string) => {
+    const tk = takeovers.get(ticketId);
+    takeovers.delete(ticketId);
+    if (tk) await tk.session.endTakeover(tk.base).catch(() => {});
+    if (s.tickets.get(ticketId)?.state === "claimed") s.tickets.reopen(ticketId);
+  };
+  // A takeover nobody is looking at (the phone locked, the tab closed) goes back to open after a while.
+  const idleMs = o.takeoverIdleMs ?? 5 * 60_000;
+  const idleTimer = setInterval(() => {
+    for (const [id, tk] of takeovers) if (Date.now() - tk.lastSeen > idleMs) void releaseTakeover(id);
+  }, Math.min(30_000, idleMs));
+  idleTimer.unref();
   const screenshots = new Map<string, string>();
   s.tickets.on("screenshot", (e: { ticketId: string; jpeg: string }) => {
     screenshots.set(e.ticketId, e.jpeg);
@@ -250,7 +265,12 @@ export function createApp(o: AppOptions) {
 
     // ---- tickets ----
     "GET /api/tickets": (c) => s.tickets.listOpen(c.human!.userId).map(ticketView),
-    "GET /api/tickets/:id": (c) => ticketView(requireTicket(c)),
+    "GET /api/tickets/:id": (c) => {
+      const t = requireTicket(c);
+      const tk = takeovers.get(t.id);
+      if (tk) tk.lastSeen = Date.now(); // the take-control window asks every second while it's open
+      return ticketView(t);
+    },
     "GET /api/tickets/:id/screenshot": (c) => {
       requireTicket(c);
       const jpeg = screenshots.get(c.params.id!);
@@ -294,10 +314,18 @@ export function createApp(o: AppOptions) {
         s.tickets.fail(t.id, "The agent session has ended.");
         throw new HttpError(410, "The agent session has ended.");
       }
+      // Taking control again of a ticket you already hold (a reload, another device, coming back after ✕
+      // didn't get through) re-attaches to the same tab instead of failing.
+      const held = takeovers.get(t.id);
+      if (t.state === "claimed" && held) {
+        held.lastSeen = Date.now();
+        return { ...ticketView(t), tab: held.tab.id, origin: new URL(f.url).origin };
+      }
+      if (t.state === "claimed") s.tickets.reopen(t.id); // claimed before a restart: nothing holds it
       s.tickets.claim(t.id, "human-takeover");
       // Logging in always happens in the personal profile: that's the opt-in to "read as you".
       const profile = f.kind === "login" ? "personal" : f.profile;
-      const entry = { tab: null as unknown as Tab, base: null as unknown as Tab, session: a };
+      const entry = { tab: null as unknown as Tab, base: null as unknown as Tab, session: a, lastSeen: Date.now() };
       const tab = await a.takeoverTab(profile, f.url, (current) => {
         entry.tab = current;
       });
@@ -313,6 +341,7 @@ export function createApp(o: AppOptions) {
       const ev = c.body as z.infer<typeof TakeoverInput>;
       // Aimed at a tab that is no longer the one under control (a popup opened or closed): refuse, never
       // replay it into the other tab (ADR 0016). The viewer drops its queue and follows.
+      tk.lastSeen = Date.now();
       if (ev.tab && ev.tab !== tk.tab.id) throw new HttpError(409, "tab_changed");
       const { tab: _aimed, ...input } = ev;
       await withTimeout(tk.tab.input(input), 5000, "The page didn't take the input.");
@@ -326,7 +355,14 @@ export function createApp(o: AppOptions) {
       const t = requireTicket(c);
       const tk = takeovers.get(t.id);
       if (!tk || t.state !== "claimed") throw new HttpError(409, "Not under takeover.");
+      tk.lastSeen = Date.now();
       return { tab: tk.tab.id, view: await withTimeout(tk.tab.viewState(), 1500, "").catch(() => ({ focus: null, fields: [] })) };
+    },
+    "POST /api/tickets/:id/release": async (c) => {
+      const t = requireTicket(c);
+      if (t.kind !== "challenge") throw new HttpError(400, "Only challenges are taken over.");
+      await releaseTakeover(t.id);
+      return ticketView(s.tickets.get(t.id)!);
     },
     "POST /api/tickets/:id/done": async (c) => {
       const t = requireTicket(c);

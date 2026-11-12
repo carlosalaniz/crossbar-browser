@@ -185,3 +185,29 @@ export function keyFor(ch: string): { key: string; code: string; shift: boolean 
   if (shifted[ch]) return { key: ch, code: shifted[ch]!, shift: true };
   return null;
 }
+
+/**
+ * Phone view (take control): the page image is drawn as wide as the view; `z` (≥1) zooms further. The pan is
+ * clamped so the page always covers the view sideways (no black bars) and, vertically, so you can't scroll past
+ * its top or past its bottom edge reaching the top of what covers the view (buttons, keyboard): `visibleH`.
+ */
+export function clampPan(pan: { x: number; y: number }, z: number, img: { w: number; h: number }, view: { w: number; visibleH: number }): { x: number; y: number } {
+  const w = img.w * z;
+  const h = img.h * z;
+  const x = Math.min(0, Math.max(view.w - w, pan.x));
+  const y = h <= view.visibleH ? 0 : Math.min(0, Math.max(view.visibleH - h, pan.y));
+  return { x, y };
+}
+
+/** Where to pan so a field (page px) sits at 40% of the visible part of the view, as a phone browser does. */
+export function panToField(field: PageBox, base: number, z: number, view: { w: number; visibleH: number }): { x: number; y: number } {
+  const cx = (field.x + field.w / 2) * base * z;
+  const cy = (field.y + field.h / 2) * base * z;
+  return { x: view.w / 2 - cx, y: view.visibleH * 0.4 - cy };
+}
+
+/** A one-finger drag on the phone view: pan the view first; what's left past its edge scrolls the page. */
+export function dragPanThenScroll(pan: { x: number; y: number }, d: { x: number; y: number }, z: number, img: { w: number; h: number }, view: { w: number; visibleH: number }): { pan: { x: number; y: number }; scroll: { x: number; y: number } } {
+  const next = clampPan({ x: pan.x + d.x, y: pan.y + d.y }, z, img, view);
+  return { pan: next, scroll: { x: d.x - (next.x - pan.x), y: d.y - (next.y - pan.y) } };
+}

@@ -194,7 +194,7 @@ export function fakeAuth(users: Record<string, Partial<HumanSession>>): HumanAut
   };
 }
 
-export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth; authFactory?: (db: ReturnType<typeof buildServices>["db"]) => HumanAuth; extraOrigins?: string[]; adblock?: Parameters<typeof buildServices>[0]["adblock"] } = {}) {
+export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth; authFactory?: (db: ReturnType<typeof buildServices>["db"]) => HumanAuth; extraOrigins?: string[]; adblock?: Parameters<typeof buildServices>[0]["adblock"]; takeoverIdleMs?: number } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "crossbar-test-"));
   const pool = opts.pool ?? new FakePool();
   const sent: Array<{ url: string; init: RequestInit }> = [];
@@ -217,7 +217,7 @@ export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<st
   services.pacer.check = () => ({ waitMs: 0 });
   services.pacer.reserve = () => ({ waitMs: 0 });
   const auth = opts.authFactory?.(services.db) ?? opts.auth ?? fakeAuth(opts.users ?? { alice: {} });
-  const app = createApp({ services, tokens: services.tokens, auth, version: "test", appOrigin: "http://crossbar.test", extraOrigins: opts.extraOrigins });
+  const app = createApp({ services, tokens: services.tokens, auth, version: "test", appOrigin: "http://crossbar.test", extraOrigins: opts.extraOrigins, takeoverIdleMs: opts.takeoverIdleMs });
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
   const port = (app.server.address() as AddressInfo).port;
   const base = `http://127.0.0.1:${port}`;

@@ -60,16 +60,55 @@ export interface ScrollState {
   atEnd: boolean;
 }
 
+/**
+ * Refs live here, in the isolated world, never on the page's elements: an attribute on the live DOM is
+ * something the page can find or watch being added (docs/automation-signal-audit.md S02). The attribute
+ * name below is only written onto the detached clone used for extraction.
+ */
 const REF_ATTR = "data-cb-ref";
+const byRef = new Map<string, WeakRef<Element>>();
+const refOfEl = new WeakMap<Element, string>();
+const clickables = new WeakSet<Element>();
 const INTERACTIVE =
   'a[href], button, input:not([type=hidden]), textarea, select, summary, label, [onclick], [tabindex]:not([tabindex="-1"]), ' +
   "[role=button], [role=link], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=option], [role=radio], [role=checkbox], [role=switch], [role=treeitem]";
-/** Elements a person sees as clickable without any of the above (a pointer cursor on a styled list item). */
-const CLICKABLE_ATTR = "data-cb-clickable";
 const MAX_SCAN = 6000;
 const REGION_SELECTOR = "header, nav, main, aside, footer, form, dialog, [role=banner], [role=navigation], [role=main], [role=complementary], [role=contentinfo], [role=dialog]";
 
 let refCounter = 0;
+
+const hasRef = (el: Element) => refOfEl.has(el);
+/** The element's ref, giving it one if it has none. `clickable`: seen as clickable by its cursor alone. */
+function refFor(el: Element, clickable = false): string {
+  let r = refOfEl.get(el);
+  if (!r) {
+    r = `e${++refCounter}`;
+    refOfEl.set(el, r);
+    byRef.set(r, new WeakRef(el));
+  }
+  if (clickable) clickables.add(el);
+  return r;
+}
+/** The live element for a ref, or null if it's gone from the document. */
+function elementByRef(ref: string): Element | null {
+  const el = byRef.get(ref)?.deref();
+  return el && el.isConnected ? el : null;
+}
+/** Nearest ancestor-or-self with a ref. */
+function refAncestor(el: Element | null): Element | null {
+  for (let n = el; n; n = n.parentElement) if (refOfEl.has(n)) return n;
+  return null;
+}
+/** Every live element with a ref, in document order. */
+function refElements(): Element[] {
+  const out: Element[] = [];
+  for (const [ref, w] of byRef) {
+    const el = w.deref();
+    if (el?.isConnected) out.push(el);
+    else byRef.delete(ref);
+  }
+  return out.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+}
 
 function isVisible(el: Element): boolean {
   if (!(el instanceof HTMLElement || el instanceof SVGElement)) return true;
@@ -88,30 +127,24 @@ function isVisible(el: Element): boolean {
 
 /** Gives every visible interactive element a stable ref. Existing refs are kept. */
 export function tagRefs(root: ParentNode = document): void {
-  // Catch up with refs from an earlier run in this document first, so new refs never repeat one.
-  for (const el of root.querySelectorAll(`[${REF_ATTR}]`)) {
-    const n = Number(el.getAttribute(REF_ATTR)!.slice(1));
-    if (n > refCounter) refCounter = n;
-  }
   for (const el of root.querySelectorAll(INTERACTIVE)) {
-    if (!el.hasAttribute(REF_ATTR) && isVisible(el)) el.setAttribute(REF_ATTR, `e${++refCounter}`);
+    if (!hasRef(el) && isVisible(el)) refFor(el);
   }
   // What a person sees as clickable: the pointer cursor starts on this element (not inherited from a
   // clickable parent), it's a sensible size, and it isn't inside something that already has a ref.
   let scanned = 0;
   for (const el of (root as Document | Element).querySelectorAll("body *")) {
     if (++scanned > MAX_SCAN) break;
-    if (el.hasAttribute(REF_ATTR) || !(el instanceof HTMLElement)) continue;
+    if (hasRef(el) || !(el instanceof HTMLElement)) continue;
     if (getComputedStyle(el).cursor !== "pointer") continue;
     const parent = el.parentElement;
     if (parent && getComputedStyle(parent).cursor === "pointer") continue;
-    if (el.closest(`[${REF_ATTR}]`)) continue;
+    if (refAncestor(el)) continue;
     const r = el.getBoundingClientRect();
     // Up to a full-width row (options and list items often are), but not a whole section of the page.
     if (r.width < 4 || r.height < 4 || r.width > innerWidth + 1 || r.height > Math.min(600, innerHeight * 0.75) || !isVisible(el)) continue;
     if (!(el.innerText ?? "").trim() && !el.getAttribute("aria-label") && !el.getAttribute("title") && !el.querySelector("img, svg")) continue;
-    el.setAttribute(REF_ATTR, `e${++refCounter}`);
-    el.setAttribute(CLICKABLE_ATTR, "");
+    refFor(el, true);
   }
 }
 
@@ -124,6 +157,9 @@ export function cloneVisible(node: Node): Node | null {
   if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") return null;
   if (!isVisible(el)) return null;
   const copy = el.cloneNode(false) as Element;
+  // The clone is detached, so marking it is invisible to the page.
+  const ref = refOfEl.get(el);
+  if (ref) copy.setAttribute(REF_ATTR, ref);
   if (tag === "input" || tag === "textarea" || tag === "select") return copy;
   for (const child of el.childNodes) {
     const c = cloneVisible(child);
@@ -149,7 +185,7 @@ function kindOf(el: Element): LinkItem["kind"] {
   const t = el.tagName.toLowerCase();
   const role = el.getAttribute("role") ?? "";
   if (/^(option|radio|menuitemradio|menuitemcheckbox|checkbox|switch|treeitem)$/.test(role)) return "option";
-  if (el.hasAttribute(CLICKABLE_ATTR) || (t !== "a" && t !== "button" && t !== "input" && t !== "select" && t !== "textarea" && !role && (el.hasAttribute("onclick") || el.hasAttribute("tabindex")))) return "clickable";
+  if (clickables.has(el) || (t !== "a" && t !== "button" && t !== "input" && t !== "select" && t !== "textarea" && !role && (el.hasAttribute("onclick") || el.hasAttribute("tabindex")))) return "clickable";
   if (t === "a" || el.getAttribute("role") === "link") return "link";
   if (t === "input") return (el as HTMLInputElement).type === "submit" || (el as HTMLInputElement).type === "button" ? "button" : "input";
   if (t === "select") return "select";
@@ -166,9 +202,9 @@ function regionOf(el: Element): string {
 
 export function listLinks(): LinkItem[] {
   const out: LinkItem[] = [];
-  for (const el of document.querySelectorAll(`[${REF_ATTR}]`)) {
+  for (const el of refElements()) {
     if (!isVisible(el)) continue;
-    const item: LinkItem = { ref: el.getAttribute(REF_ATTR)!, kind: kindOf(el), text: textOf(el), region: regionOf(el) };
+    const item: LinkItem = { ref: refOfEl.get(el)!, kind: kindOf(el), text: textOf(el), region: regionOf(el) };
     const href = (el as HTMLAnchorElement).href;
     if (href) item.href = href;
     out.push(item);
@@ -266,8 +302,7 @@ export function collectItems(p: CollectParams = {}): CollectedItem[] {
     const a = el.querySelector("a[href]") as HTMLAnchorElement | null;
     const href = a?.href;
     const key = (p.keyAttr && el.getAttribute(p.keyAttr)) || hash(`${href ?? ""}|${text}`);
-    if (!el.hasAttribute(REF_ATTR)) el.setAttribute(REF_ATTR, `e${++refCounter}`);
-    out.push({ key, ref: el.getAttribute(REF_ATTR)!, text, ...(href ? { href } : {}) });
+    out.push({ key, ref: refFor(el), text, ...(href ? { href } : {}) });
   }
   return out;
 }
@@ -281,15 +316,15 @@ export function scrollState(): ScrollState {
 }
 
 /** Cosmetic ad filtering: CSS from the adblock engine, injected as a style element. */
+/**
+ * Cosmetic filtering through a constructed stylesheet adopted by the document: no <style> node, no fixed
+ * id, nothing a MutationObserver sees (audit S03). Hidden ads are still hidden, which a page can measure.
+ */
+let cosmeticSheet: CSSStyleSheet | null = null;
 export function applyCosmetics(p: { css: string }): number {
-  const id = "cb-cosmetic";
-  let style = document.getElementById(id) as HTMLStyleElement | null;
-  if (!style) {
-    style = document.createElement("style");
-    style.id = id;
-    (document.head ?? document.documentElement).appendChild(style);
-  }
-  style.textContent = p.css;
+  cosmeticSheet ??= new CSSStyleSheet();
+  cosmeticSheet.replaceSync(p.css);
+  if (!document.adoptedStyleSheets.includes(cosmeticSheet)) document.adoptedStyleSheets = [...document.adoptedStyleSheets, cosmeticSheet];
   return p.css.length;
 }
 
@@ -310,7 +345,7 @@ export function domTokens(): { classes: string[]; ids: string[]; hrefs: string[]
 
 /** Center of the element with this ref, in viewport coordinates, after scrolling it into view. */
 export function locateRef(p: { ref: string }): { x: number; y: number; tag: string; text: string } | null {
-  const el = document.querySelector(`[${REF_ATTR}="${CSS.escape(p.ref)}"]`);
+  const el = elementByRef(p.ref);
   if (!el || !isVisible(el)) return null;
   el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior });
   const r = el.getBoundingClientRect();
@@ -341,18 +376,16 @@ export function findByText(p: { text: string; nth?: number }): { ref: string; te
   }
   const pick = (exact.length ? exact : partial)[p.nth ?? 0];
   if (!pick) return null;
-  const target = pick.closest(`[${REF_ATTR}]`) ?? pick;
-  if (!target.hasAttribute(REF_ATTR)) {
-    target.setAttribute(REF_ATTR, `e${++refCounter}`);
-    target.setAttribute(CLICKABLE_ATTR, "");
-  }
-  return { ref: target.getAttribute(REF_ATTR)!, text: textOf(target) };
+  const target = refAncestor(pick) ?? pick;
+  const ref = hasRef(target) ? refOfEl.get(target)! : refFor(target, true);
+  return { ref, text: textOf(target) };
 }
 
 /** Element under a point, for the check before click (Access Model L4). */
 export function refAtPoint(p: { x: number; y: number }): string | null {
   const el = document.elementFromPoint(p.x, p.y);
-  return el?.closest(`[${REF_ATTR}]`)?.getAttribute(REF_ATTR) ?? null;
+  const r = refAncestor(el);
+  return r ? refOfEl.get(r)! : null;
 }
 
 /** The element a click at this point would really hit, looking inside open shadow roots. */
@@ -385,7 +418,7 @@ function composedContains(outer: Element, inner: Element): boolean {
  * Otherwise it names what's on top and gives it a ref, so the agent can deal with it (close a banner).
  */
 export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null } {
-  const target = document.querySelector(`[${REF_ATTR}="${CSS.escape(p.ref)}"]`);
+  const target = elementByRef(p.ref);
   const hit = deepElementFromPoint(p.x, p.y);
   if (!target || !hit) return { ok: false, covering: null };
   if (composedContains(target, hit)) return { ok: true };
@@ -399,15 +432,17 @@ export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true
   }
   // A real overlay: say what it is, with a ref.
   const cover = (hit.closest("button, a[href], [role=button], [role=dialog], dialog, [aria-modal]") ?? hit) as Element;
-  if (!cover.hasAttribute(REF_ATTR)) {
+  if (!hasRef(cover)) {
     tagRefs();
-    if (!cover.hasAttribute(REF_ATTR)) {
-      cover.setAttribute(REF_ATTR, `e${++refCounter}`);
-      cover.setAttribute(CLICKABLE_ATTR, "");
-    }
+    if (!hasRef(cover)) refFor(cover, true);
   }
   const tag = cover.tagName.toLowerCase() + (cover.id ? `#${cover.id}` : "") + (typeof (cover as HTMLElement).className === "string" && (cover as HTMLElement).className.trim() ? `.${(cover as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".")}` : "");
-  return { ok: false, covering: { ref: cover.getAttribute(REF_ATTR)!, tag, text: textOf(cover).slice(0, 80) } };
+  return { ok: false, covering: { ref: refOfEl.get(cover)!, tag, text: textOf(cover).slice(0, 80) } };
 }
 
-(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText };
+/** The live element for a ref, returned as a handle (not by value) so typing can target it without a selector. */
+export function elementForRef(p: { ref: string }): Element | null {
+  return elementByRef(p.ref);
+}
+
+(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText, elementForRef };

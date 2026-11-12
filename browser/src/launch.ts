@@ -3,6 +3,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { CdpConnection } from "./cdp.ts";
 
@@ -155,6 +156,38 @@ function track(proc: ChildProcess): void {
   });
 }
 
+class PortTaken extends Error {}
+
+function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const s = createServer();
+    s.once("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const port = (s.address() as { port: number }).port;
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+function devtoolsUrl(proc: ChildProcess): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${buf.slice(-500)}`)), 15000);
+    proc.stderr!.on("data", (d: Buffer) => {
+      buf += d.toString();
+      const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (m) {
+        clearTimeout(timer);
+        resolve(m[1]!);
+      } else if (/Cannot start http server for devtools/i.test(buf)) {
+        clearTimeout(timer);
+        reject(new PortTaken("DevTools port taken"));
+      }
+    });
+    proc.once("exit", (code) => reject(new Error(`Chrome exited (${code}): ${buf.slice(-500)}`)));
+  });
+}
+
 export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBrowser> {
   const exe = opts.executablePath ?? findChrome();
   if (!exe) throw new Error("No Chromium found. Set CHROME_PATH.");
@@ -162,7 +195,8 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
   const userDataDir = opts.userDataDir ?? mkdtempSync(join(tmpdir(), "crossbar-profile-"));
   const args = [
     `--user-data-dir=${userDataDir}`,
-    "--remote-debugging-port=0",
+    // The DevTools port is set per attempt below. Never 0: Chrome marks the browser as automated
+    // (navigator.webdriver === true) when the port is 0, headful or not (audit S01, measured on CfT 157).
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
@@ -176,22 +210,24 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     ...(opts.extraArgs ?? []),
     "about:blank",
   ];
-  const finalArgs = mergeFeatureFlags(args);
-  const proc = spawn(exe, finalArgs, { stdio: ["ignore", "ignore", "pipe"] });
-  track(proc);
-  const wsUrl = await new Promise<string>((resolve, reject) => {
-    let buf = "";
-    const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${buf.slice(-500)}`)), 15000);
-    proc.stderr!.on("data", (d: Buffer) => {
-      buf += d.toString();
-      const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
-      if (m) {
-        clearTimeout(timer);
-        resolve(m[1]!);
-      }
-    });
-    proc.once("exit", (code) => reject(new Error(`Chrome exited (${code}): ${buf.slice(-500)}`)));
-  });
+  let proc: ChildProcess | undefined;
+  let wsUrl = "";
+  let finalArgs: string[] = [];
+  for (let attempt = 0; ; attempt++) {
+    // A free loopback port, picked just before launch. If another process takes it first, Chrome
+    // can't bind DevTools; that attempt is killed and retried on a new port.
+    finalArgs = mergeFeatureFlags([`--remote-debugging-port=${await freeLoopbackPort()}`, ...args]);
+    const p = spawn(exe, finalArgs, { stdio: ["ignore", "ignore", "pipe"] });
+    track(p);
+    try {
+      wsUrl = await devtoolsUrl(p);
+      proc = p;
+      break;
+    } catch (e) {
+      if (p.exitCode === null) p.kill("SIGKILL");
+      if (!(e instanceof PortTaken) || attempt >= 4) throw e;
+    }
+  }
   proc.stderr!.resume();
   const cdp = await CdpConnection.connect(wsUrl);
   return {

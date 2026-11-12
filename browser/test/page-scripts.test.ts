@@ -47,7 +47,12 @@ describe("extraction", { skip: skipReason }, () => {
     const b = await scripts.extract(s, { includeLinks: true });
     const ref = a.links!.find((l) => l.text === "Reply")!.ref;
     assert.equal(b.links!.find((l) => l.text === "Reply")!.ref, ref);
-    assert.equal(await evaluate(env, s, `document.querySelector('[data-cb-ref="${ref}"]').id`), "reply");
+    // The ref resolves to the live element through the isolated world; the page's DOM carries no marker.
+    const objectId = (await scripts.elementHandle(s, ref))!;
+    const d = await env.browser.cdp.send("DOM.describeNode", { objectId }, s);
+    assert.deepEqual(d.node.attributes?.filter((x, i) => i % 2 === 0 && x === "id"), ["id"]);
+    assert.equal(d.node.attributes![d.node.attributes!.indexOf("id") + 1], "reply");
+    assert.equal(await evaluate(env, s, `document.querySelectorAll('[data-cb-ref], [data-cb-clickable]').length`), 0);
   });
 
   test("the page can't see the extraction code", async () => {
@@ -142,9 +147,13 @@ describe("ad blocking", { skip: skipReason }, () => {
     const s = await openPage(env, env.site.url("a.test", "/pages/ads"));
     const css = blocker.cosmeticCss(env.site.url("a.test", "/pages/ads"), await scripts.call(s, "domTokens"));
     assert.match(css, /ad-banner/);
+    const styles = await evaluate(env, s, "document.querySelectorAll('style').length");
     await scripts.call(s, "applyCosmetics", { css });
     const r = await scripts.extract(s, { minWords: 1 });
     assert.doesNotMatch(r.content, /BUY NOW/);
+    // S03: no <style> node and no fixed id added to the page.
+    assert.equal(await evaluate(env, s, "document.querySelectorAll('style').length"), styles);
+    assert.equal(await evaluate(env, s, "document.getElementById('cb-cosmetic')"), null);
     assert.match(r.content, /Real content/);
   });
 });

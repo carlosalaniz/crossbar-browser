@@ -28,7 +28,7 @@ export function pageBundle(): Promise<string> {
   return bundled;
 }
 
-type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens" | "findByText" | "checkPoint";
+type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens" | "findByText" | "checkPoint" | "elementForRef";
 
 export class PageScripts {
   private readonly contexts = new Map<string, number>();
@@ -45,24 +45,39 @@ export class PageScripts {
     return ctx;
   }
 
-  async call<T>(sessionId: string, fn: Fn, params: unknown = {}): Promise<T> {
+  /** The live element behind a ref, as a remote object id (release it with Runtime.releaseObject), or null. */
+  async elementHandle(sessionId: string, ref: string): Promise<string | null> {
+    return this.call<string | null>(sessionId, "elementForRef", { ref }, false);
+  }
+
+  async call<T>(sessionId: string, fn: Fn, params: unknown = {}, byValue = true): Promise<T> {
+    return this.run<T>(sessionId, `globalThis.__crossbar.${fn}(${JSON.stringify(params)})`, byValue, fn);
+  }
+
+  /**
+   * Evaluates a shipped expression (app code, never agent input) in the isolated world of this target.
+   * Every DOM read Crossbar makes goes through here or `call`, never the page's own world, where page
+   * scripts could hook getters and notice (audit S04).
+   */
+  inspect<T>(sessionId: string, expression: string): Promise<T> {
+    return this.run<T>(sessionId, expression, true, "inspect");
+  }
+
+  private async run<T>(sessionId: string, expression: string, byValue: boolean, fn: string): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctx = this.contexts.get(sessionId) ?? (await this.install(sessionId));
       try {
-        const r = await this.cdp.send(
-          "Runtime.evaluate",
-          { expression: `globalThis.__crossbar.${fn}(${JSON.stringify(params)})`, contextId: ctx, returnByValue: true, awaitPromise: true },
-          sessionId,
-        );
+        const r = await this.cdp.send("Runtime.evaluate", { expression, contextId: ctx, returnByValue: byValue, awaitPromise: true }, sessionId);
         if (r.exceptionDetails) {
           const msg = r.exceptionDetails.exception?.description ?? r.exceptionDetails.text;
           // A navigation replaced the document: the bundle isn't there any more.
-          if (/__crossbar/.test(msg) && attempt === 0) {
+          if (/__crossbar|context/i.test(msg) && attempt === 0) {
             this.contexts.delete(sessionId);
             continue;
           }
           throw new Error(`${fn} failed: ${msg}`);
         }
+        if (!byValue) return (r.result.subtype === "null" || !r.result.objectId ? null : r.result.objectId) as T;
         return r.result.value as T;
       } catch (e) {
         // Stale context id after navigation.

@@ -110,7 +110,7 @@ export const TOOLS = {
   }),
   type: def({
     name: "type",
-    description: "Type text into the field with this ref. Password, one-time-code and card fields are refused, as is typing on sign-in providers. Set submit to press Enter afterwards.",
+    description: "Type text into the field with this ref, key by key. Set submit to press Enter afterwards. To have the person sign in instead, use ask_person.",
     input: z.object({
       ref: z.string().regex(/^e\d+$/).describe("Field ref from read."),
       text: z.string().max(10000).describe("Text to type."),
@@ -130,6 +130,17 @@ export const TOOLS = {
     class: "read",
   }),
   back: def({ name: "back", description: "Go back one page in this tab.", input: z.object({}), minToken: "read", class: "read" }),
+  ask_person: def({
+    name: "ask_person",
+    description:
+      "Hand the current page to the person when only they can go on: logging in, a check you can't pass, confirming a payment, or a step you mustn't take yourself. They get a notification and take control of this tab; your session is paused on it. Call wait_for_ticket, then read again. Never ask for passwords or codes in chat; use this instead.",
+    input: z.object({
+      need: z.enum(["login", "captcha", "verification", "other"]).describe("login: they sign in. captcha: a check only a person can pass. verification: a bank or 2-step confirmation. other: anything else only they can do."),
+      reason: z.string().min(1).max(300).describe("One sentence for the person, e.g. 'Sign in so I can read your RFQ replies.' Shown as your words, marked unverified."),
+    }),
+    minToken: "read",
+    class: "read",
+  }),
   wait_for_ticket: def({
     name: "wait_for_ticket",
     description: "Wait for a ticket (approval, proposal or challenge) to be resolved by a person. Returns its state; on resolved, retry what you were doing.",

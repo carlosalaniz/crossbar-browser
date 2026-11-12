@@ -8,7 +8,7 @@ import { detect, type BlockState } from "@crossbar/detect";
 import { matchReadOperation, adapterFor, isTelemetry } from "@crossbar/adapters";
 import type { TokenInfo } from "./tokens.ts";
 import type { Sites } from "./sites.ts";
-import { registrable, hostOf } from "./sites.ts";
+import { registrable, hostOf, CATEGORIES } from "./sites.ts";
 import type { Grants } from "./grants.ts";
 import type { Tickets, Ticket } from "./tickets.ts";
 import { Activity, ReadTextIndex, extractValues, shapesOf, valueType, entropyBand } from "./activity.ts";
@@ -294,7 +294,7 @@ export class AgentSession {
     if (this.takeoverTabs.has(tab.id)) {
       // A person driving the tab may use sites blocked for agents by default (sign-in providers are for
       // humans only), but never LAN or private addresses, this app, or a site blocked on purpose.
-      if (site.level === "blocked" && !(site.source === "default" && site.matched && !["private", "lan"].includes(site.matched) && site.matched !== hostOf(this.s.appOrigin ?? ""))) {
+      if (site.level === "blocked" && !((site.source === "default" || site.source === "category") && site.matched && !["private", "lan"].includes(site.matched) && site.matched !== hostOf(this.s.appOrigin ?? ""))) {
         return { verdict: "deny", rule: `site_blocked:${site.matched ?? domain}` };
       }
       return { verdict: "allow", rule: "human_takeover" };
@@ -643,7 +643,13 @@ export class AgentSession {
     const adapter = adapterFor(url);
     const domain = registrable(u.hostname);
     const site = this.s.sites.resolve(this.userId, url);
-    if (site.level === "blocked") return { state: "denied", reason: `${site.matched ?? domain} is blocked for agents. Only a person can change that in the web app.` };
+    if (site.level === "blocked") {
+      if (site.category && site.source === "category") {
+        const label = CATEGORIES[site.category].label.toLowerCase();
+        return { state: "denied", reason: `${site.matched ?? domain} is in "${label}", which is off for agents in this Crossbar account. Only the person can turn it on, in Crossbar → Settings. Don't ask them for passwords or codes; with it on, Crossbar hands any login to them.` };
+      }
+      return { state: "denied", reason: `${site.matched ?? domain} is blocked for agents. Only a person can change that in the web app.` };
+    }
 
     let profile: Profile = LEVEL_RANK[site.level] >= LEVEL_RANK.read_as_you ? "personal" : "anon";
     if (this.tainted && !this.usedBeforeTaint.has(domain)) {

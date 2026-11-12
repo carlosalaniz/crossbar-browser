@@ -614,6 +614,7 @@ async function activityScreen() {
 async function settingsScreen() {
   me = await api<Me>("GET", "/api/me");
   const n = await api<{ ntfyUrl: string | null }>("GET", "/api/settings/notifications");
+  const cats = await api<Array<{ id: string; label: string; help: string; enabled: boolean; examples: string[] }>>("GET", "/api/settings/categories");
   const ntfy = h("input", { class: "input", placeholder: "https://ntfy.sh/your-secret-topic", value: n.ntfyUrl ?? "" }) as HTMLInputElement;
   const msg = h("p", { class: "small" });
   const out = h("div", {});
@@ -640,6 +641,20 @@ async function settingsScreen() {
         msg.textContent = r.sent ? "Test sent." : "Couldn't send. Check the URL.";
       } }, "Send test")),
       msg,
+      h("h3", {}, "What agents may use"),
+      h("p", { class: "muted small" }, "Sensitive kinds of sites are off for agents until you turn them on. With one on, its sites follow the normal rules: reading is anonymous, you do any login yourself through a ticket, and payments or deletions still ask every time."),
+      h("div", { class: "cats" }, cats.map((cat) => h("label", { class: "card row between" },
+        h("div", {}, h("strong", {}, cat.label), h("div", { class: "muted small" }, cat.help), h("div", { class: "muted small" }, `e.g. ${cat.examples.join(", ")}`)),
+        h("input", { type: "checkbox", checked: cat.enabled, onchange: async (e: Event) => {
+          const box = e.target as HTMLInputElement;
+          try {
+            await withFreshFactor(() => api("PUT", "/api/settings/categories", { category: cat.id, enabled: box.checked }));
+          } catch (err) {
+            box.checked = !box.checked;
+            msg.textContent = (err as Error).message;
+          }
+        } }),
+      ))),
       h("h3", {}, "Two-factor"),
       h("p", { class: "muted small" }, `${me.passkeys} passkey(s) · TOTP ${me.totp ? "on" : "off"} · ${me.recoveryCodesLeft} recovery codes left. With two-factor on, approvals that loosen access ask for a fresh check.`),
       h("div", { class: "row" },

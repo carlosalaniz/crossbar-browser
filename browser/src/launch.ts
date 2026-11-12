@@ -208,6 +208,9 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     // A desktop window of a normal size; the viewport fits inside it.
     `--window-size=${opts.windowSize ?? "1280,800"}`,
     "--window-position=0,0",
+    // Each agent session has its own window (ADR 0017). Under Xvfb a window covered by another reports
+    // itself hidden and stops animation frames (measured); a page acted on while hidden is a bot signal.
+    "--disable-backgrounding-occluded-windows",
     ...(opts.lang ? [`--lang=${opts.lang}`, `--accept-lang=${opts.lang},${opts.lang.split("-")[0]}`] : []),
     ...securityArgs(opts),
     ...(opts.headless ?? true ? ["--headless=new"] : []),

@@ -242,8 +242,21 @@ class ManagedBrowser {
     return { verdict: "allow", rule: `worker:${rule}` };
   }
 
+  /** Bounds of the browser's first window; new windows copy them so every window looks the same. */
+  private windowBounds?: { left?: number; top?: number; width?: number; height?: number };
+
   async newTab(profile: Profile): Promise<CdpTab> {
-    const { targetId } = await this.cdp.send("Target.createTarget", { url: "about:blank" });
+    // A window of its own, not a background tab in a shared window: two sessions (or a session and a person
+    // taking control) never push each other's page into the background (ADR 0017).
+    if (!this.windowBounds) {
+      const first = (await this.cdp.send("Target.getTargets").catch(() => null))?.targetInfos.find((t) => t.type === "page");
+      const w = first ? await this.cdp.send("Browser.getWindowForTarget", { targetId: first.targetId }).catch(() => null) : null;
+      this.windowBounds = w?.bounds ?? {};
+    }
+    const { targetId } = await this.cdp.send("Target.createTarget", { url: "about:blank", newWindow: true });
+    const win = await this.cdp.send("Browser.getWindowForTarget", { targetId }).catch(() => null);
+    const { left, top, width, height } = this.windowBounds;
+    if (win && width && height) await this.cdp.send("Browser.setWindowBounds", { windowId: win.windowId, bounds: { left, top, width, height } }).catch(() => {});
     this.expected.add(targetId);
     let session: string | undefined;
     for (let i = 0; i < 200 && !session; i++) {

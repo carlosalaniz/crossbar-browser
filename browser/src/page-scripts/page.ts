@@ -343,13 +343,20 @@ export function domTokens(): { classes: string[]; ids: string[]; hrefs: string[]
   return { classes: [...classes], ids: [...ids], hrefs: [...hrefs] };
 }
 
-/** Center of the element with this ref, in viewport coordinates, after scrolling it into view. */
-export function locateRef(p: { ref: string }): { x: number; y: number; tag: string; text: string } | null {
+/**
+ * Where the element with this ref is, in viewport coordinates. It isn't scrolled unless `reveal` is set:
+ * the caller scrolls with real wheel events first, like a person (audit S06), and only falls back to this.
+ */
+export function locateRef(p: { ref: string; reveal?: boolean }): { x: number; y: number; w: number; h: number; inView: boolean; vw: number; vh: number; tag: string; text: string } | null {
   const el = elementByRef(p.ref);
   if (!el || !isVisible(el)) return null;
-  el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior });
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2, tag: el.tagName.toLowerCase(), text: textOf(el) };
+  let r = el.getBoundingClientRect();
+  const inView = (rr: DOMRect) => rr.top >= 0 && rr.left >= 0 && rr.bottom <= innerHeight && rr.right <= innerWidth && rr.width > 0 && rr.height > 0;
+  if (p.reveal && !inView(r)) {
+    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" as ScrollBehavior });
+    r = el.getBoundingClientRect();
+  }
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, inView: inView(r), vw: innerWidth, vh: innerHeight, tag: el.tagName.toLowerCase(), text: textOf(el) };
 }
 
 /**

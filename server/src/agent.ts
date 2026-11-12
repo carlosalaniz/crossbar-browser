@@ -669,7 +669,7 @@ export class AgentSession {
     if (profile === "personal" && isSensitive(url) && !this.peekGrant(domain, "sensitive_path", this.requestHash({ method: "GET", url }, null))) {
       return this.askBeforeNavigation(u, "sensitive_path", `${u.pathname} on ${domain} is a private page on a signed-in site. A person has to approve each time.`);
     }
-    const wait = this.s.pacer.check(this.userId, domain);
+    const wait = this.s.pacer.reserve(this.userId, domain);
     if (wait.refuse) return { state: "denied", reason: wait.refuse };
     if (wait.waitMs > 0) await new Promise((r) => setTimeout(r, wait.waitMs));
 
@@ -688,7 +688,6 @@ export class AgentSession {
       const { url: where, rule } = this.lastNavRefusal as { url: string; rule: string };
       return { state: "denied", reason: `The page led to ${hostOf(where) || where}, which agents may not open (${rule}).` };
     }
-    this.s.pacer.record(this.userId, domain);
     await this.afterLoad(tab);
     const block = await this.checkBlock(tab);
     if (block) return this.challenge(block, tab, nav.url || url);

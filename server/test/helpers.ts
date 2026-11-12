@@ -205,6 +205,7 @@ export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<st
   }
   // Tests don't wait for human pacing.
   services.pacer.check = () => ({ waitMs: 0 });
+  services.pacer.reserve = () => ({ waitMs: 0 });
   const auth = opts.authFactory?.(services.db) ?? opts.auth ?? fakeAuth(opts.users ?? { alice: {} });
   const app = createApp({ services, tokens: services.tokens, auth, version: "test", appOrigin: "http://crossbar.test", extraOrigins: opts.extraOrigins });
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));

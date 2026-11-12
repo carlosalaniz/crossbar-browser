@@ -18,6 +18,16 @@ export class Pacer {
     const last = list[list.length - 1];
     return { waitMs: last === undefined ? 0 : Math.max(0, this.minIntervalMs - (at - last)) };
   }
+  /**
+   * Check and book in one step (audit S09): the slot is taken when the wait is decided, so two sessions
+   * opening pages on the same site at once can't both skip the wait.
+   */
+  reserve(userId: string, domain: string, at = Date.now()): { waitMs: number; refuse?: string } {
+    const r = this.check(userId, domain, at);
+    if (!r.refuse) this.record(userId, domain, at + r.waitMs);
+    return r;
+  }
+
   record(userId: string, domain: string, at = Date.now()): void {
     const key = `${userId}|${domain}`;
     this.hits.set(key, [...(this.hits.get(key) ?? []), at]);

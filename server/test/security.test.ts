@@ -407,6 +407,37 @@ describe("challenges (ADR 0001)", () => {
     await t.close();
   });
 
+  test("ask_person: the agent hands a page it can't handle to the person (login it couldn't detect)", async () => {
+    const t = await startTestApp();
+    t.services.db.prepare("INSERT INTO settings (user_id, key, value) VALUES ('alice', 'ntfyUrl', 'https://ntfy.example/topic')").run();
+    const pool = t.pool as FakePool;
+    // An email-first sign-in page Crossbar doesn't recognise as a wall.
+    pool.pages.set("https://shop.example/account", { title: "Your account", content: "Email address Continue" });
+    const c = await t.mcpClient(t.token("alice", "read", "claude"));
+    assert.equal((await c.call("ask_person", { need: "login", reason: "Sign in so I can read your RFQ replies." })).state, "error", "nothing open yet");
+    assert.equal((await c.call("open", { url: "https://shop.example/account" })).state, "ok");
+    const r = await c.call("ask_person", { need: "login", reason: "Sign in so I can read your RFQ replies." });
+    assert.equal(r.state, "blocked");
+    const view = await t.api("GET", `/api/tickets/${r.ticket!.id}`, { user: "alice" });
+    assert.equal(view.json.kind, "challenge");
+    assert.deepEqual(view.json.agentSays, { text: "Sign in so I can read your RFQ replies.", verified: false });
+    // One clear notification, server text only (the agent's words stay on the request page).
+    await sleep(20);
+    const h = t.sent.at(-1)!.init.headers as Record<string, string>;
+    assert.equal(h.Title, "Log in to shop.example");
+    assert.doesNotMatch(JSON.stringify(t.sent.at(-1)), /RFQ/);
+    // Asking again doesn't stack tickets.
+    assert.equal((await c.call("ask_person", { need: "login", reason: "again" })).ticket!.id, r.ticket!.id);
+    // The person takes control in the signed-in profile; the agent is paused while they have it.
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/claim`, { user: "alice" });
+    assert.ok(pool.tabs.some((x) => x.profile === "personal"));
+    assert.equal((await c.call("read")).state, "blocked");
+    const done = await t.api("POST", `/api/tickets/${r.ticket!.id}/done`, { user: "alice" });
+    assert.equal(done.json.verified, true);
+    assert.equal(t.services.sites.resolve("alice", "shop.example").level, "read_as_you");
+    await t.close();
+  });
+
   test("challenges can't be approved, only resolved through takeover", async () => {
     const t = await startTestApp();
     const tk = t.services.tickets.create({ userId: "alice", tokenId: null, agentName: "a", kind: "challenge", facts: {} });
@@ -704,6 +735,6 @@ describe("sensitive categories are account permissions (ADR 0014)", () => {
     const list = (await t.api("GET", "/api/settings/categories", { user: "alice" })).json as unknown as Array<{ id: string; enabled: boolean }>;
     assert.deepEqual(list.map((x) => x.id), ["banking", "mail", "passwords", "cloud", "signin", "government"]);
     const init = (await (await fetch(`${t.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${t.token("alice")}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) })).json()) as { result: { instructions: string } };
-    assert.match(init.result.instructions, /ask the user to log in/);
+    assert.match(init.result.instructions, /call ask_person instead of asking in chat/);
   });
 });

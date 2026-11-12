@@ -100,6 +100,8 @@ async function dispatch(s: Services, a: AgentSession, name: ToolName, args: Reco
       return a.scroll(args.until, args.selector);
     case "back":
       return a.back();
+    case "ask_person":
+      return a.askPerson(args.need, String(args.reason));
     case "wait_for_ticket": {
       const t0 = s.tickets.get(args.ticket);
       if (!t0 || t0.userId !== userId || (t0.tokenId !== null && t0.tokenId !== a.token.id)) return { state: "error", message: "No such ticket for this agent." };

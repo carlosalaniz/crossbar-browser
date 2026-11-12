@@ -39,6 +39,7 @@ export function describeTicket(t: Ticket): { title: string; body: string } {
     if (kind === "login") return { title: `Log in to ${domain}`, body: `${agent} is waiting. Tap to take control and log in.` };
     if (kind === "verification") return { title: `Confirm a payment on ${domain}`, body: `Your bank is asking. ${agent} is waiting.` };
     if (kind === "captcha") return { title: `Solve a check on ${domain}`, body: `A ${String(f.vendor ?? "captcha")} check is in the way. ${agent} is waiting.` };
+    if (f.vendor === "agent") return { title: `${agent} needs you on ${domain}`, body: "Tap to take control. Its reason is on the request page." };
     return { title: `${domain} is blocking ${agent}`, body: "Tap to take a look." };
   }
   if (t.kind === "proposal") return { title: `${agent} asks for more access on ${String(f.pattern ?? domain)}`, body: "Approve: the change applies. Deny: nothing changes." };

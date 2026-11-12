@@ -546,7 +546,22 @@ export class AgentSession {
       : { state: "error", message: "Paused." };
   }
 
-  private challenge(block: BlockState & { passwordFieldOrigins?: string[] }, tab: Tab, url: string): ToolResult {
+  /**
+   * The agent hands the page to the person (owner request, 12 Nov 2026): the same challenge ticket a
+   * detected wall makes, so the person gets a notification and takes control of this tab, and the
+   * verifier still decides when they say they're done. Its reason is shown as the agent's words.
+   */
+  async askPerson(need: "login" | "captcha" | "verification" | "other", reason: string): Promise<ToolResult> {
+    const tab = this.tabs[this.active];
+    const url = tab ? await tab.currentUrl().catch(() => "") : "";
+    if (!tab || !/^https?:/.test(url)) return { state: "error", message: "Open the page the person should handle first (open), then call ask_person." };
+    // A login is done with the person's own login, so it happens in the signed-in profile (as for a detected wall).
+    const kind = need === "other" ? "soft_block" : need;
+    const block: BlockState = { kind, vendor: "agent", origin: new URL(url).origin, evidence: [`the agent asked for a person (${need})`] };
+    return this.challenge(block, tab, url, reason);
+  }
+
+  private challenge(block: BlockState & { passwordFieldOrigins?: string[] }, tab: Tab, url: string, agentReason?: string): ToolResult {
     // Reuse an open ticket only for the same block (same kind, same origin); a different wall gets its own.
     const existing = this.s.tickets.listOpen(this.userId).find((x) => {
       const f = x.facts as { sessionId?: string; kind?: string; origin?: string };
@@ -554,7 +569,7 @@ export class AgentSession {
     });
     const t =
       existing ??
-      this.s.tickets.create({ userId: this.userId, tokenId: this.token.id, agentName: this.token.agentName, kind: "challenge", facts: { ...block, url, profile: tab.profile, sessionId: this.id, domain: registrable(hostOf(url)) } });
+      this.s.tickets.create({ userId: this.userId, tokenId: this.token.id, agentName: this.token.agentName, kind: "challenge", agentReason: agentReason ?? null, facts: { ...block, url, profile: tab.profile, sessionId: this.id, domain: registrable(hostOf(url)) } });
     if (!existing) this.s.notifier.ticket(t);
     this.blockedTabTickets.set(t.id, tab.id);
     const reason = block.kind === "login" ? `Log in to ${registrable(hostOf(url))} is needed.` : block.kind === "verification" ? "The bank wants the payment confirmed by a person (3-D Secure)." : block.kind === "captcha" ? `A ${block.vendor} check is in the way.` : block.kind === "consent" ? "A consent wall is in the way." : "The site is blocking or limiting this request.";

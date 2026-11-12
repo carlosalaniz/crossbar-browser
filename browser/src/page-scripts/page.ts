@@ -447,9 +447,23 @@ export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true
   return { ok: false, covering: { ref: refOfEl.get(cover)!, tag, text: textOf(cover).slice(0, 80) } };
 }
 
+/** A visible link on this page to `href` that opens in this tab, given a ref; null if there is none. */
+export function refForHref(p: { href: string }): string | null {
+  const norm = (h: string) => h.replace(/#.*$/, "").replace(/\/$/, "");
+  const want = norm(p.href);
+  for (const a of document.querySelectorAll("a[href]")) {
+    const el = a as HTMLAnchorElement;
+    if (norm(el.href) !== want) continue;
+    if ((el.target && el.target !== "_self" && el.target !== "_top") || el.hasAttribute("download")) continue;
+    if (!isVisible(el)) continue;
+    return refFor(el);
+  }
+  return null;
+}
+
 /** The live element for a ref, returned as a handle (not by value) so typing can target it without a selector. */
 export function elementForRef(p: { ref: string }): Element | null {
   return elementByRef(p.ref);
 }
 
-(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText, elementForRef };
+(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText, elementForRef, refForHref };

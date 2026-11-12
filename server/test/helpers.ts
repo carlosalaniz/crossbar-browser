@@ -93,6 +93,10 @@ export class FakeTab implements Tab {
     return entry;
   }
 
+  async followLink() {
+    return null;
+  }
+
   async navigate(url: string): Promise<NavResult> {
     const e = this.simulate({ url, method: "GET", resourceType: "Document" });
     if (e.verdict !== "allow") return { url: this.url, title: "", status: null, error: `net::ERR_BLOCKED_BY_CLIENT (${e.rule})` } as NavResult;

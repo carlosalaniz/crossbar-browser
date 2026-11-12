@@ -95,6 +95,8 @@ export interface Tab {
   readonly mainFrameId: string;
   setPolicy(p: TabPolicy): void;
   navigate(url: string): Promise<NavResult>;
+  /** If this page has a visible link to `url` that opens in this tab, click it like a person and wait for the page; else null. */
+  followLink(url: string): Promise<NavResult | null>;
   back(): Promise<NavResult>;
   currentUrl(): Promise<string>;
   extract(p?: ExtractParams): Promise<ExtractResult>;
@@ -399,6 +401,31 @@ class CdpTab implements Tab {
       return { url, title: "", status: null, ...(r.errorText ? { error: r.errorText } : {}) } as NavResult;
     }
     await loaded;
+    this.b.scripts.forget(this.session);
+    return this.nav();
+  }
+
+  async followLink(url: string): Promise<NavResult | null> {
+    if (!/^https?:\/\//i.test(url)) return null;
+    const ref = await this.b.scripts.call<string | null>(this.session, "refForHref", { href: url }).catch(() => null);
+    if (!ref) return null;
+    this.lastDoc = { status: null, headers: {} };
+    const loaded = this.waitLoad(15000);
+    try {
+      await this.click(ref);
+    } catch {
+      return null; // covered or gone: the caller opens the address instead
+    }
+    // A full page load (also after a redirect), or a single-page app changing the address without one.
+    const same = (u: string) => u.replace(/#.*$/, "").replace(/\/$/, "");
+    const arrived = (async () => {
+      for (let i = 0; i < 100; i++) {
+        await sleep(150);
+        if (same(await this.currentUrl().catch(() => "")) !== same(url)) continue;
+        if ((await this.b.scripts.inspect<string>(this.session, "document.readyState").catch(() => "")) === "complete") return;
+      }
+    })();
+    await Promise.race([loaded, arrived]);
     this.b.scripts.forget(this.session);
     return this.nav();
   }

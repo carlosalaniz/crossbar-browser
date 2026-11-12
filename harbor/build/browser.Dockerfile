@@ -69,7 +69,7 @@ USER crossbar
 EXPOSE 9300
 VOLUME ["/profiles"]
 ENTRYPOINT ["tini", "--"]
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24 -nolisten tcp +extension GLX", "node", "browser/src/host.ts"]
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1200x24 -nolisten tcp +extension GLX", "node", "browser/src/host.ts"]
 
 # ---- browser for hosts without internal networks (Harbor): firewalls itself to the proxy, then
 # drops root and all capabilities. Needs NET_ADMIN (Harbor's net-admin permission). ----

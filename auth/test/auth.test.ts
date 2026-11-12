@@ -24,12 +24,11 @@ describe("primitives", () => {
 describe("login and the route table", () => {
   let t: Awaited<ReturnType<typeof startTestApp>>;
   let auth: Auth;
-  let code: string;
   let logs: string[];
   before(async () => {
     logs = [];
     t = await startTestApp({ users: {}, authFactory: (db) => (auth = new Auth(db, { appOrigin: "http://crossbar.test", log: (m) => logs.push(m) })) });
-    code = auth.ensureSetupCode()!;
+    await auth.ensureDefaultOwner();
   });
   after(() => t?.close());
 
@@ -50,19 +49,28 @@ describe("login and the route table", () => {
     }
   });
 
-  test("setup needs the code from the logs and creates the owner", async () => {
-    assert.ok(logs.some((l) => l.includes(code)));
-    assert.equal((await call("GET", "/api/setup")).json.open, true);
-    assert.equal((await call("POST", "/api/setup", { code: "wrong-code", username: "owner", password: "a long password" })).status, 403);
-    const ok = await call("POST", "/api/setup", { code, username: "Owner", password: "a long password" });
+  test("first start creates admin/admin as owner, flagged until the password changes (ADR 0018)", async () => {
+    assert.ok(logs.some((l) => l.includes('username "admin"')));
+    assert.ok(logs.some((l) => l.includes("default password")));
+    assert.equal((await call("GET", "/api/setup")).status, 404);
+    const ok = await call("POST", "/api/login", { username: "admin", password: "admin" });
     assert.equal(ok.status, 200);
     assert.match(ok.setCookie!, /HttpOnly/);
     assert.match(ok.setCookie!, /SameSite=Lax/);
     const me = await call("GET", "/api/me", undefined, ok.cookie);
-    assert.equal(me.json.username, "owner");
+    assert.equal(me.json.username, "admin");
     assert.equal(me.json.isOwner, true);
-    // The code works once.
-    assert.equal((await call("POST", "/api/setup", { code, username: "x", password: "a long password" })).status, 403);
+    assert.equal(me.json.defaultPassword, true);
+    // A second start doesn't create another account.
+    await auth.ensureDefaultOwner();
+    assert.equal((t.services.db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n, 1);
+    // The new password keeps the 10-character minimum.
+    assert.equal((await call("POST", "/api/me/password", { current: "admin", next: "short" }, ok.cookie)).status, 400);
+    assert.equal((await call("POST", "/api/me/password", { current: "admin", next: "a long password" }, ok.cookie)).status, 200);
+    assert.equal((await call("GET", "/api/me", undefined, ok.cookie)).json.defaultPassword, false);
+    assert.equal((await call("POST", "/api/login", { username: "admin", password: "admin" })).status, 401);
+    // Later tests log in as "owner".
+    t.services.db.prepare("UPDATE users SET username = 'owner' WHERE username = 'admin'").run();
   });
 
   test("password login, logout, and session-only routes", async () => {
@@ -124,12 +132,12 @@ describe("login and the route table", () => {
     assert.equal(last, 429);
   });
 
-  test("reset-owner: a new code resets the owner's password and second factors", async () => {
-    const reset = auth.resetOwner();
-    assert.equal((await call("GET", "/api/setup")).json.reset, true);
-    assert.equal((await call("POST", "/api/setup", { code: reset, username: "ignored", password: "brand new password" })).status, 200);
+  test("reset-owner puts the owner back on the default password and removes second factors", async () => {
+    assert.equal(await auth.resetOwner(), "owner");
     assert.equal((await call("POST", "/api/login", { username: "owner", password: "a long password" })).status, 401);
-    assert.equal((await call("POST", "/api/login", { username: "owner", password: "brand new password" })).status, 200);
+    const ok = await call("POST", "/api/login", { username: "owner", password: "admin" });
+    assert.equal(ok.status, 200);
+    assert.equal((await call("GET", "/api/me", undefined, ok.cookie)).json.defaultPassword, true);
   });
 
   test("passkey options use this origin's RP ID and require user verification", async () => {

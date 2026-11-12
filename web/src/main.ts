@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Crossbar web app: phone-first. Approvals, takeover, live view, connect, sites, activity, settings.
 // Talks to /api only (Charter). Page text and agent reasons are shown as quotes, marked unverified.
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { parseRoute, headline, SCOPE_LABEL, toPage, timeLeft, levelLabel, originOf, type Route, type TicketView } from "./logic.ts";
 
 // ---------- tiny DOM helper ----------
@@ -111,6 +111,7 @@ interface Me {
   totp: boolean;
   passkeys: number;
   recoveryCodesLeft: number;
+  defaultPassword?: boolean;
 }
 let me: Me | null = null;
 
@@ -119,6 +120,9 @@ function shell(title: string, ...content: Child[]): HTMLElement {
     "div",
     { class: "shell" },
     h("header", { class: "top" }, h("a", { href: "#/", class: "brand", "aria-label": "Home" }, "Crossbar"), h("span", { class: "title" }, title), me ? h("a", { href: "#/settings", class: "me" }, me.username) : null),
+    me?.defaultPassword && !location.hash.startsWith("#/settings")
+      ? h("a", { class: "banner warn-banner", href: "#/settings" }, "You're using the default password. Change it before this is reachable outside your network.")
+      : null,
     h("main", { class: "content" }, ...content),
     me
       ? h(
@@ -144,37 +148,6 @@ function errorBox(e: unknown) {
 }
 
 // ---------- screens ----------
-async function setupScreen() {
-  const s = await api<{ open: boolean; reset: boolean }>("GET", "/api/setup");
-  if (!s.open) return void (location.hash = "#/login");
-  const code = h("input", { class: "input", placeholder: "Setup code from the logs", autocomplete: "off" }) as HTMLInputElement;
-  const user = h("input", { class: "input", placeholder: "Username", autocomplete: "username", value: s.reset ? "" : "" }) as HTMLInputElement;
-  const pw = h("input", { class: "input", type: "password", placeholder: "Password (10+ characters)", autocomplete: "new-password" }) as HTMLInputElement;
-  const err = h("p", { class: "error" });
-  render(
-    shell(
-      s.reset ? "Reset owner" : "Set up",
-      h("p", {}, s.reset ? "Enter the reset code printed by reset-owner and a new password." : "Welcome. Enter the setup code printed in the app's logs, then create your account."),
-      code,
-      s.reset ? null : user,
-      pw,
-      h("button", {
-        class: "btn primary",
-        onclick: async () => {
-          try {
-            await api("POST", "/api/setup", { code: code.value.trim(), username: s.reset ? "owner" : user.value, password: pw.value });
-            location.hash = "#/";
-            void boot();
-          } catch (e) {
-            err.textContent = (e as Error).message;
-          }
-        },
-      }, s.reset ? "Reset" : "Create account"),
-      err,
-    ),
-  );
-}
-
 async function loginScreen() {
   const user = h("input", { class: "input", placeholder: "Username", autocomplete: "username" }) as HTMLInputElement;
   const pw = h("input", { class: "input", type: "password", placeholder: "Password", autocomplete: "current-password" }) as HTMLInputElement;
@@ -199,21 +172,8 @@ async function loginScreen() {
   render(
     shell(
       "Log in",
-      h("form", { onsubmit: (e: Event) => (e.preventDefault(), void login()) }, user, pw, totp, rec, h("button", { class: "btn primary", type: "submit" }, "Log in")),
-      h("button", {
-        class: "btn",
-        onclick: async () => {
-          try {
-            const o = await api<{ challengeId: string; options: Parameters<typeof startAuthentication>[0]["optionsJSON"] }>("POST", "/api/passkey/login/options", {});
-            const response = await startAuthentication({ optionsJSON: o.options });
-            await api("POST", "/api/passkey/login/verify", { challengeId: o.challengeId, response });
-            location.hash = "#/";
-            void boot();
-          } catch (e) {
-            err.textContent = (e as Error).message;
-          }
-        },
-      }, "Log in with a passkey"),
+      h("form", { class: "stack", onsubmit: (e: Event) => (e.preventDefault(), void login()) }, user, pw, totp, rec, h("button", { class: "btn primary", type: "submit" }, "Log in")),
+      h("p", { class: "muted small" }, "First time? Log in as admin with password admin, then change it in Settings."),
       err,
     ),
   );
@@ -620,7 +580,8 @@ async function settingsScreen() {
   const msg = h("p", { class: "small" });
   const out = h("div", {});
   const err = h("p", { class: "error" });
-  const showCodes = (codes: string[] | null) => codes && out.replaceChildren(h("div", { class: "banner" }, "Recovery codes. Each works once. Save them somewhere safe."), h("pre", {}, codes.join("\n")));
+  const curPw = h("input", { class: "input", type: "password", placeholder: "Current password", autocomplete: "current-password" }) as HTMLInputElement;
+  const nextPw = h("input", { class: "input", type: "password", placeholder: "New password", autocomplete: "new-password", minlength: "10" }) as HTMLInputElement;
   const users = me.isOwner ? await api<Array<{ username: string; isOwner: number }>>("GET", "/api/users") : [];
   const newUser = h("input", { class: "input", placeholder: "Username" }) as HTMLInputElement;
   const newPw = h("input", { class: "input", type: "password", placeholder: "Temporary password", autocomplete: "new-password" }) as HTMLInputElement;
@@ -656,38 +617,19 @@ async function settingsScreen() {
           }
         } }),
       ))),
-      h("h3", {}, "Two-factor"),
-      h("p", { class: "muted small" }, `${me.passkeys} passkey(s) · TOTP ${me.totp ? "on" : "off"} · ${me.recoveryCodesLeft} recovery codes left. With two-factor on, approvals that loosen access ask for a fresh check.`),
-      h("div", { class: "row" },
-        h("button", { class: "btn", onclick: async () => {
-          try {
-            const o = await api<{ challengeId: string; options: Parameters<typeof startRegistration>[0]["optionsJSON"] }>("POST", "/api/me/passkey/options", {});
-            const response = await startRegistration({ optionsJSON: o.options });
-            const r = await withFreshFactor(() => api<{ recoveryCodes: string[] | null }>("POST", "/api/me/passkey/verify", { challengeId: o.challengeId, response }));
-            showCodes(r.recoveryCodes);
-            void boot(false);
-          } catch (e) {
-            err.textContent = (e as Error).message;
-          }
-        } }, "Add a passkey"),
-        me.totp ? null : h("button", { class: "btn", onclick: async () => {
-          const b = await api<{ secret: string; otpauth: string }>("POST", "/api/me/totp/begin", {});
-          const code = h("input", { class: "input", inputmode: "numeric", placeholder: "Code from the app", autocomplete: "one-time-code" }) as HTMLInputElement;
-          out.replaceChildren(
-            h("p", {}, "Add this to your authenticator app: ", h("a", { href: b.otpauth }, "open in app"), " or enter the key:"),
-            h("pre", {}, b.secret.replace(/(.{4})/g, "$1 ").trim()),
-            code,
-            h("button", { class: "btn primary", onclick: async () => {
-              try {
-                const r = await withFreshFactor(() => api<{ recoveryCodes: string[] }>("POST", "/api/me/totp/enable", { secret: b.secret, code: code.value }));
-                showCodes(r.recoveryCodes);
-              } catch (e) {
-                err.textContent = (e as Error).message;
-              }
-            } }, "Turn on"),
-          );
-        } }, "Set up an authenticator app"),
-      ),
+      h("h3", {}, "Password"),
+      h("p", { class: "muted small" }, "At least 10 characters."),
+      h("form", { class: "stack", onsubmit: async (e: Event) => {
+        e.preventDefault();
+        try {
+          await withFreshFactor(() => api("POST", "/api/me/password", { current: curPw.value, next: nextPw.value }));
+          curPw.value = nextPw.value = "";
+          msg.textContent = "Password changed.";
+          await tryMe();
+        } catch (e2) {
+          err.textContent = (e2 as Error).message;
+        }
+      } }, h("input", { type: "text", autocomplete: "username", value: me.username, hidden: true }), curPw, nextPw, h("button", { class: "btn", type: "submit" }, "Change password")),
       out,
       me.isOwner
         ? h("div", {}, h("h3", {}, "Household"), users.map((u) => h("div", { class: "small" }, `${u.username}${u.isOwner ? " (owner)" : ""}`)), h("div", { class: "row" }, newUser, newPw, h("button", { class: "btn", onclick: async () => {
@@ -713,14 +655,11 @@ async function route() {
   cleanup = [];
   const r: Route = parseRoute(location.hash);
   try {
-    if (!me && r.name !== "setup" && r.name !== "login") {
-      const s = await api<{ open: boolean }>("GET", "/api/setup");
-      if (s.open && !(await tryMe())) return void (location.hash = "#/setup");
+    if (!me && r.name !== "login") {
       if (!(await tryMe())) return void (location.hash = "#/login");
     }
     switch (r.name) {
       case "setup":
-        return await setupScreen();
       case "login":
         return await loginScreen();
       case "home":

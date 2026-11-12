@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Entry point. `node server/src/main.ts` serves the app; `node server/src/main.ts reset-owner` prints an owner reset code.
+// Entry point. `node server/src/main.ts` serves the app; `node server/src/main.ts reset-owner` resets the owner to the default password.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Auth } from "@crossbar/auth/auth";
@@ -22,8 +22,8 @@ const version = JSON.parse(readFileSync(new URL("../../package.json", import.met
 
 if (process.argv[2] === "reset-owner") {
   const db = openDb(join(dataDir, "crossbar.db"));
-  const code = new Auth(db, { appOrigin }).resetOwner();
-  console.log(`Owner reset code: ${code}\nOpen ${appOrigin}, choose "Set up", and enter it to set a new owner password. Two-factor and passkeys for the owner are removed.`);
+  const user = await new Auth(db, { appOrigin }).resetOwner();
+  console.log(`The owner "${user}" now has the default password "admin", and two-factor and passkeys are removed. Log in at ${appOrigin} and change it.`);
   process.exit(0);
 }
 
@@ -62,7 +62,7 @@ const services = buildServices({
   pace: { minIntervalMs: env.CROSSBAR_PACE_MS ? Number(env.CROSSBAR_PACE_MS) : undefined, hourlyCap: env.CROSSBAR_HOURLY_CAP ? Number(env.CROSSBAR_HOURLY_CAP) : undefined },
 });
 const auth = new Auth(services.db, { appOrigin, secureCookies: appOrigin.startsWith("https://"), log: (m) => console.log(m) });
-auth.ensureSetupCode();
+await auth.ensureDefaultOwner();
 const webRoot = env.CROSSBAR_WEB ?? resolve(import.meta.dirname, "../../web/dist");
 const app = createApp({ services, tokens: services.tokens, auth, version, appOrigin, extraOrigins, webRoot });
 setInterval(() => {

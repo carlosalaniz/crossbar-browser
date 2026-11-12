@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Smoke test against a running stack (npm run dev). Usage: node scripts/stack-smoke.ts <setup-code> [origin]
-const code = process.argv[2];
-const ORIGIN = process.argv[3] ?? "http://localhost:8080";
+// Smoke test against a running stack (npm run dev). Usage: node scripts/stack-smoke.ts [origin]
+// Logs in as CROSSBAR_USER / CROSSBAR_PASSWORD, default admin / admin (ADR 0018).
+const ORIGIN = process.argv[2] ?? "http://localhost:8080";
 const T = "http://testsite.test:8090";
 let cookie = "";
 async function human(method: string, path: string, body?: unknown) {
@@ -10,8 +10,8 @@ async function human(method: string, path: string, body?: unknown) {
   if (sc) cookie = sc.split(";")[0]!;
   return { status: r.status, json: (await r.json().catch(() => null)) as Record<string, unknown> };
 }
-const setup = await human("POST", "/api/setup", { code, username: "smoke", password: "a long password here" });
-if (setup.status !== 200) await human("POST", "/api/login", { username: "smoke", password: "a long password here" });
+const login = await human("POST", "/api/login", { username: process.env.CROSSBAR_USER ?? "admin", password: process.env.CROSSBAR_PASSWORD ?? "admin" });
+if (login.status !== 200) throw new Error(`login failed: ${JSON.stringify(login.json)}`);
 const tok = (await human("POST", "/api/tokens", { agentName: "stack-smoke", kind: "act" })).json.secret as string;
 let sid = "";
 async function call(name: string, args: unknown = {}) {

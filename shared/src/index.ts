@@ -200,7 +200,6 @@ export interface RouteDef {
 const r = (d: RouteDef) => d;
 
 export const ApproveBody = z.object({ scope: GrantScope.default("task") });
-export const SetupBody = z.object({ code: z.string().min(6).describe("Setup code printed in the logs on first run."), username: z.string().min(1).max(64), password: z.string().min(10).max(256) });
 export const LoginBody = z.object({ username: z.string().max(64), password: z.string().max(256), totp: z.string().max(10).optional(), recoveryCode: z.string().max(40).optional() });
 export const CreateTokenBody = z.object({ agentName: z.string().min(1).max(64).describe("Written on every audit row."), kind: TokenKind.default("read") });
 export const SiteBody = z.object({ pattern: z.string().min(3).max(253), level: SiteLevel.optional(), adblock: z.boolean().optional(), device: Device.optional() });
@@ -225,8 +224,6 @@ export const TakeoverInput = z.object({
 
 export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/healthz", auth: "public", description: "Liveness." }),
-  r({ method: "GET", path: "/api/setup", auth: "public", description: "Whether first-run setup is still open." }),
-  r({ method: "POST", path: "/api/setup", auth: "public", description: "Create the owner with the setup code from the logs.", body: SetupBody }),
   r({ method: "POST", path: "/api/login", auth: "public", description: "Password login, then TOTP or recovery code when 2FA is on.", body: LoginBody }),
   r({ method: "POST", path: "/api/passkey/login/options", auth: "public", description: "Passkey login challenge." }),
   r({ method: "POST", path: "/api/passkey/login/verify", auth: "public", description: "Verify a passkey assertion and start a session." }),

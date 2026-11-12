@@ -23,6 +23,12 @@ describe("automation signals", { skip: skipReason }, () => {
     assert.equal(await evaluate(env, s, "navigator.webdriver"), false);
   });
 
+  test("headless: the screen is at least as big as the window (no 800x600 screen under a bigger window)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/blank"));
+    const v = JSON.parse(String(await evaluate(env, s, "JSON.stringify({ sw: screen.width, sh: screen.height, ow: outerWidth, oh: outerHeight })"))) as { sw: number; sh: number; ow: number; oh: number };
+    assert.ok(v.sw >= v.ow && v.sh >= v.oh, JSON.stringify(v));
+  });
+
   test("S02: reading, collecting, finding by text and a refused click write nothing into the page", async () => {
     const s = await openPage(env, env.site.url("a.test", "/pages/article"));
     await evaluate(env, s, `window.__muts = []; new MutationObserver((l) => { for (const m of l) window.__muts.push(m.type + ':' + (m.attributeName || '')); }).observe(document, { subtree: true, childList: true, attributes: true }); 1`);

@@ -221,7 +221,9 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     "--disable-backgrounding-occluded-windows",
     ...(opts.lang ? [`--lang=${opts.lang}`, `--accept-lang=${opts.lang},${opts.lang.split("-")[0]}`] : []),
     ...securityArgs(opts),
-    ...(opts.headless ?? true ? ["--headless=new"] : []),
+    // Headless reports an 800x600 screen whatever the window size; a window bigger than its screen happens in
+    // no real browser. Give it a screen the size of its window, as a maximised window on a real desktop.
+    ...(opts.headless ?? true ? ["--headless=new", `--screen-info={0,0 ${(opts.windowSize ?? "1280,800").replace(",", "x")}}`] : []),
     ...(opts.hostResolverRules ? [`--host-resolver-rules=${opts.hostResolverRules}`] : []),
     ...extensionArgs(opts.extensions ?? [WS_BLOCK_EXTENSION]),
     ...(opts.extraArgs ?? []),

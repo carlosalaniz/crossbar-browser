@@ -285,7 +285,9 @@ export class AgentSession {
     const site = this.s.sites.resolve(this.userId, r.url);
     const pageDomain = this.pageDomain.get(tab.profile);
     const pageSite = pageDomain ? this.s.sites.resolve(this.userId, pageDomain) : site;
-    if (this.s.adblock && pageSite.adblock && !(r.resourceType === "Document" && r.sessionId === r.rootSessionId)) {
+    // While a person has control, the page loads as in their own browser: blocking a site's fraud or
+    // challenge scripts during a login is how logins fail (audit S22).
+    if (this.s.adblock && pageSite.adblock && !this.takeoverTabs.has(tab.id) && !(r.resourceType === "Document" && r.sessionId === r.rootSessionId)) {
       if (this.s.adblock.shouldBlock(r, pageDomain ? `https://${pageDomain}/` : r.url)) return { verdict: "deny", rule: "blocked_ad" };
     }
     if (this.takeoverTabs.has(tab.id)) {

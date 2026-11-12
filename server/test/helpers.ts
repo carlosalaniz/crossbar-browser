@@ -185,7 +185,7 @@ export function fakeAuth(users: Record<string, Partial<HumanSession>>): HumanAut
   };
 }
 
-export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth; authFactory?: (db: ReturnType<typeof buildServices>["db"]) => HumanAuth; extraOrigins?: string[] } = {}) {
+export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<string, Partial<HumanSession>>; settleMs?: number; auth?: HumanAuth; authFactory?: (db: ReturnType<typeof buildServices>["db"]) => HumanAuth; extraOrigins?: string[]; adblock?: Parameters<typeof buildServices>[0]["adblock"] } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "crossbar-test-"));
   const pool = opts.pool ?? new FakePool();
   const sent: Array<{ url: string; init: RequestInit }> = [];
@@ -195,6 +195,7 @@ export async function startTestApp(opts: { pool?: BrowserPool; users?: Record<st
     appOrigin: "http://crossbar.test",
     pace: { minIntervalMs: 1000, hourlyCap: 1000 },
     settleMs: opts.settleMs ?? 200,
+    adblock: opts.adblock,
     fetchImpl: (async (url: string, init: RequestInit) => {
       sent.push({ url, init });
       return new Response("ok");

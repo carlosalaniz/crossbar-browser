@@ -54,6 +54,7 @@ USER node
 FROM debian:trixie-slim AS browser
 RUN apt-get update \
  && apt-get install -y --no-install-recommends chromium xvfb xauth fonts-liberation fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk ca-certificates tini \
+    libgl1 libglx-mesa0 libgl1-mesa-dri libegl1 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /usr/local/bin/node /usr/local/bin/node
 COPY deploy/browser/policies.json /etc/chromium/policies/managed/crossbar.json
@@ -67,7 +68,7 @@ USER crossbar
 EXPOSE 9300
 VOLUME ["/profiles"]
 ENTRYPOINT ["tini", "--"]
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24 -nolisten tcp", "node", "browser/src/host.ts"]
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24 -nolisten tcp +extension GLX", "node", "browser/src/host.ts"]
 
 # ---- browser for hosts without internal networks (Harbor): firewalls itself to the proxy, then
 # drops root and all capabilities. Needs NET_ADMIN (Harbor's net-admin permission). ----

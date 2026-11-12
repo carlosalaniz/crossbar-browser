@@ -63,6 +63,10 @@ async function launch(userId: string, profile: string): Promise<Running> {
       // Chromium resolves nothing itself except the proxy: no DNS channel around it.
       `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${new URL(proxy ?? "http://proxy").hostname}`,
       ...(sandbox ? [] : ["--no-sandbox"]),
+      // WebGL through Mesa llvmpipe, an honest software renderer real Linux desktops and VMs report
+      // (ADR 0015). Without this Chrome blocklists llvmpipe and the page gets no WebGL at all (measured:
+      // webgl false in this image), which marks the browser far more than a software renderer does.
+      ...(env.CROSSBAR_SOFTWARE_GL === "off" ? [] : ["--ignore-gpu-blocklist"]),
     ],
   }).catch((e: Error) => {
     if (/No usable sandbox|zygote|namespace/i.test(e.message)) throw new Error(SANDBOX_HELP);

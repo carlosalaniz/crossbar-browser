@@ -2,6 +2,24 @@
 
 Read this, then `AGENTS.md`, at the start of a new build session. It records where the project stands and what to do first. Update the **Status** section at the end of each session.
 
+## Status (12 Nov 2026, stage 2 session)
+
+Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, an app that's easy to use). Done in PRs #23–#34:
+
+- **Decisions:** ADRs 0015 (device stays fixed through takeover; honest software rendering), 0016 (human input transport), 0017 (takeover concurrency), 0018 (admin/admin on first start, password-only sign-in), 0019 (fewer, clearer notifications). Credential-field typing is allowed (README and threat model match the code).
+- **Baseline fixed:** main had 5 failing tests; adapter-listed telemetry now passes (it fell through to hold).
+- **LAN:** `npm run dev` / `dev:local` put the LAN address first in `CROSSBAR_ORIGIN`, so links and notifications open on a phone on the same Wi-Fi.
+- **Accounts:** `admin` / `admin` on first start, banner and log warning until changed; no setup code; passkey/TOTP screens removed (routes kept).
+- **Automation markers removed (measured):** `navigator.webdriver` was **true even headful** because of `--remote-debugging-port=0`; now an explicit port (S01). No `data-cb-*` attributes or `<style id=cb-cosmetic>` in pages (S02, S03). All DOM reads in isolated worlds, enforced by a static test (S04).
+- **Agent input:** wheel to reach targets, curved pointer travel, varied hit point, real hold, overlay recheck before press; typing key by key (S05–S07). Atomic pacing (S09).
+- **Takeover:** full-screen window (phone and desktop), real taps/drags/pinch-zoom, live typing with password-manager hints, device no longer switches to a phone, input bound to its tab (S13, S15–S18 partly).
+- **Notifications:** page-made writes don't push; per-agent merging; "who wants to do what, where" wording.
+- **UI:** desktop sidebar, two-column approvals, sticky one-tap Approve on phones, installable manifest.
+- **Environment:** headful default, 1920×1080 container screen, owner's TZ and language (S14, S32, S33). Idle browsers stop after 10 min (RAM).
+- **Compatibility:** ad blocking pauses during takeover (S22); service/shared-worker writes judged by their page's tabs, strictest wins (S21).
+
+**Next (in order):** diagnostic page `diag.test` (signal plan B) and baseline snapshots, including the Xvfb window-visibility check for ADR 0017; takeover over WebSocket with server-side rate limit and the foreground lease (S10); llvmpipe in the browser image (S31) and pinned Chromium (S34); challenge-vendor read allowances (S19/S20); PR H ADRs (WebSocket allowance S24 needs the owner); identical-repeat ticket joining and 5-minute challenge reminder (ADR 0019).
+
 ## Status (11 Nov 2026, end of first build session)
 
 - **Steps 0–6 are built.** Repo: https://github.com/carlosalaniz/crossbar-browser (public). One PR per step (#1 merged; #2–#5 stacked, merged as CI allows).

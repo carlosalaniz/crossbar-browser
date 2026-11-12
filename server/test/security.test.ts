@@ -527,7 +527,7 @@ describe("live Reddit findings (11 Nov 2026)", () => {
     assert.match(String(((await c.call("open", { url: "https://www.reddit.com/r/selfhosted/" })).data as { url: string }).url), /^https:\/\/old\.reddit\.com\//);
   });
 
-  test("a tab behind an open wall goes quiet; captcha widgets pass; telemetry is refused; no junk tickets", async () => {
+  test("a tab behind an open wall goes quiet; captcha widgets pass; telemetry passes; no junk tickets", async () => {
     const t = await startTestApp();
     after(() => t.close());
     const pool = t.pool as FakePool;
@@ -539,7 +539,8 @@ describe("live Reddit findings (11 Nov 2026)", () => {
     const tab = [...pool.tabs].reverse()[0]!;
     const before = t.services.tickets.listOpen("alice").length;
     assert.equal(tab.simulate({ method: "POST", url: "https://www.google.com/recaptcha/enterprise/reload?k=x", resourceType: "XHR" }).rule, "captcha_widget");
-    assert.equal(tab.simulate({ method: "POST", url: "https://pi.reddit.com/v4/p", resourceType: "Ping" }).rule, "telemetry");
+    const ping = tab.simulate({ method: "POST", url: "https://pi.reddit.com/v4/p", resourceType: "Ping" });
+    assert.deepEqual([ping.verdict, ping.rule], ["allow", "telemetry"]);
     const gql = tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' });
     assert.deepEqual([gql.verdict, gql.rule], ["deny", "tab_blocked"]);
     assert.equal(t.services.tickets.listOpen("alice").length, before, "background traffic created tickets");
@@ -576,7 +577,7 @@ describe("approval cards say who triggered the request", () => {
     assert.deepEqual(cv.json.scopes, ["task", "once", "always"]);
   });
 
-  test("Reddit's tracking batches on /api/comment are refused quietly; a real form comment still asks", async () => {
+  test("Reddit's tracking batches on /api/comment pass as telemetry; a real form comment still asks", async () => {
     const t = await startTestApp();
     after(() => t.close());
     const pool = t.pool as FakePool;

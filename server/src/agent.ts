@@ -5,7 +5,7 @@ import type { BrowserPool, Profile, Tab, TabPolicy } from "@crossbar/browser/poo
 import type { GateRequest, HeldRequest, Decision } from "@crossbar/browser/gate";
 import type { AdBlocker } from "@crossbar/browser/adblock";
 import { detect, type BlockState } from "@crossbar/detect";
-import { matchReadOperation, adapterFor } from "@crossbar/adapters";
+import { matchReadOperation, adapterFor, isTelemetry } from "@crossbar/adapters";
 import type { TokenInfo } from "./tokens.ts";
 import type { Sites } from "./sites.ts";
 import { registrable, hostOf, CATEGORIES } from "./sites.ts";
@@ -334,8 +334,10 @@ export class AgentSession {
     const op = graphqlOperation(r.postData);
     if (matchReadOperation(r.url, r.method, op)) return { verdict: "allow", rule: "read_list" };
     const exit = this.tainted && !this.usedBeforeTaint.has(domain);
-    // Telemetry (fraud sensors, analytics, performance beacons) is allowed through.
-    // Banking adapters list fraud-vendor endpoints as read operations so they pass without holding.
+    // Telemetry an adapter lists (fraud sensors, analytics, performance beacons) passes, even behind a
+    // wall: a site whose sensors are refused flags the browser as a bot (docs/automation-signal-audit.md S19).
+    // Never after taint to a new domain.
+    if (!exit && isTelemetry(r.url, r.postData)) return { verdict: "allow", rule: "telemetry" };
     if (!exit && isCaptchaEndpoint(r.url)) return { verdict: "allow", rule: "captcha_widget" };
     // A tab whose page is behind an open captcha/login ticket goes quiet: its background writes can't be
     // meaningfully approved, and asking for each one would teach the person to rubber-stamp.

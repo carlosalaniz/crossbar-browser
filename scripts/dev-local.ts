@@ -13,6 +13,7 @@ import { devAllowlistFromEnv, devAllowlistWarning } from "../proxy/src/dev-allow
 import { createConfiguredTestsite } from "../testsite/src/boot.ts";
 import { loadEnv } from "../testsite/src/env.ts";
 import { freePort } from "./free-port.mjs";
+import { devOrigins } from "./lan.mjs";
 
 // The test site (testsite/) on loopback, answering for every *.test scenario host and testsite.test.
 const sitePort = await freePort(8090);
@@ -53,7 +54,8 @@ const app = spawn(process.execPath, [resolve(import.meta.dirname, "../server/src
     ...process.env,
     CROSSBAR_DATA: dataDir,
     CROSSBAR_PORT: port,
-    CROSSBAR_ORIGIN: process.env.CROSSBAR_ORIGIN ?? `http://localhost:${port}`,
+    // LAN address first, so notification links open on a phone on the same Wi-Fi.
+    CROSSBAR_ORIGIN: devOrigins(port),
     CROSSBAR_PROXY: proxyUrl,
     // Chromium resolves nothing itself; the proxy does all DNS.
     CROSSBAR_HOST_RESOLVER_RULES: "MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",

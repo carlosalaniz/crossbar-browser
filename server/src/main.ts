@@ -13,7 +13,11 @@ import { openDb } from "./db.ts";
 const env = process.env;
 const dataDir = resolve(env.CROSSBAR_DATA ?? "./data");
 const port = Number(env.CROSSBAR_PORT ?? 8080);
-const appOrigin = (env.CROSSBAR_ORIGIN ?? `http://localhost:${port}`).replace(/\/$/, "");
+// CROSSBAR_ORIGIN may list several origins, comma-separated. The first is used in links and
+// notifications (in dev, the LAN address so a phone can open them); the rest are also accepted.
+const origins = (env.CROSSBAR_ORIGIN ?? `http://localhost:${port}`).split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);
+const appOrigin = origins[0]!;
+const extraOrigins = origins.slice(1);
 const version = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "0.0.0";
 
 if (process.argv[2] === "reset-owner") {
@@ -60,7 +64,7 @@ const services = buildServices({
 const auth = new Auth(services.db, { appOrigin, secureCookies: appOrigin.startsWith("https://"), log: (m) => console.log(m) });
 auth.ensureSetupCode();
 const webRoot = env.CROSSBAR_WEB ?? resolve(import.meta.dirname, "../../web/dist");
-const app = createApp({ services, tokens: services.tokens, auth, version, appOrigin, webRoot });
+const app = createApp({ services, tokens: services.tokens, auth, version, appOrigin, extraOrigins, webRoot });
 setInterval(() => {
   services.tokens.sweep();
   services.activity.retention();
@@ -76,7 +80,7 @@ app.server.once("error", (e: NodeJS.ErrnoException) => {
   }
 });
 function ready() {
-  console.log(`Crossbar ${version} on ${appOrigin} (port ${port})`);
+  console.log(`Crossbar ${version} on ${[appOrigin, ...extraOrigins].join(" and ")} (port ${port})`);
 }
 app.server.listen(port, host, ready);
 

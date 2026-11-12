@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { freePort } from "./free-port.mjs";
+import { devOrigins } from "./lan.mjs";
 
 const envFile = resolve(import.meta.dirname, "..", "deploy", ".env");
 if (!existsSync(envFile)) {
@@ -17,12 +18,13 @@ const up = (process.argv[2] ?? "up") === "up";
 if (up && !process.env.CROSSBAR_PORT) {
   const port = await freePort(8080);
   process.env.CROSSBAR_PORT = String(port);
-  process.env.CROSSBAR_ORIGIN ??= `http://localhost:${port}`;
+  process.env.CROSSBAR_ORIGIN = devOrigins(port);
   if (port !== 8080) console.log(`Port 8080 is in use; using ${port}.`);
 }
 const args = ["compose", "--env-file", envFile, "-f", "deploy/compose.yaml", "--profile", "dev", ...(process.argv.slice(2).length ? process.argv.slice(2) : ["up", "--build"])];
+process.env.CROSSBAR_ORIGIN ??= devOrigins(process.env.CROSSBAR_PORT ?? 8080);
 console.log(`docker ${args.join(" ")}
-When it's up: open ${process.env.CROSSBAR_ORIGIN ?? "http://localhost:8080"} and find the setup code with  docker compose -f deploy/compose.yaml logs app
+When it's up: open ${process.env.CROSSBAR_ORIGIN.split(",").join(" or ")} (the first works from a phone on the same Wi-Fi)
 Test site for agents: http://site-a.test:8090/ (every scenario), http://testsite.test:8090/pages/article (browser/ test pages)`);
 const r = spawnSync("docker", args, {
   stdio: "inherit",

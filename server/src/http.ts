@@ -61,6 +61,8 @@ export interface AppOptions {
   version: string;
   /** e.g. https://crossbar.example.com — used for CSRF origin checks and links. */
   appOrigin: string;
+  /** Other origins the web app is served on (e.g. http://localhost:8080 next to a LAN address). CSRF accepts them. */
+  extraOrigins?: string[];
   webRoot?: string;
   /** Agent sessions idle longer than this are closed. */
   sessionIdleMs?: number;
@@ -543,7 +545,7 @@ export function createApp(o: AppOptions) {
       // CSRF: state-changing session requests must come from our own origin.
       if (effectiveHuman && req.method !== "GET" && route.auth !== "public") {
         const origin = req.headers.origin;
-        if (origin && origin !== o.appOrigin && req.headers["x-crossbar"] !== "1") throw new HttpError(403, "Cross-origin request refused.");
+        if (origin && origin !== o.appOrigin && !o.extraOrigins?.includes(origin) && req.headers["x-crossbar"] !== "1") throw new HttpError(403, "Cross-origin request refused.");
         if (!origin && req.headers["x-crossbar"] !== "1") throw new HttpError(403, "Missing X-Crossbar header.");
       }
       let body: unknown = undefined;

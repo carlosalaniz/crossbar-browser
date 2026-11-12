@@ -743,6 +743,17 @@ export class AgentSession {
     return ok({ url, navigated: url !== before });
   }
 
+  /** Fallback: click what a person would, by its visible text; the normal click and its checks follow. */
+  async clickText(text: string, nth: number): Promise<ToolResult> {
+    const p = this.pausedResult();
+    if (p) return p;
+    const tab = this.activeTab();
+    if (!tab) return { state: "error", message: "No page open." };
+    const found = await tab.findByText(text, nth);
+    if (!found) return { state: "error", message: `Nothing visible on the page says "${text}". Call read (mode content+links) to see what's there.` };
+    return this.click(found.ref);
+  }
+
   async click(ref: string): Promise<ToolResult> {
     const p = this.pausedResult();
     if (p) return p;

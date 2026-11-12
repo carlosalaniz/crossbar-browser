@@ -120,4 +120,25 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
       await extra.close();
     }
   });
+
+  test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: site.url("a.test", "/pages/flair") });
+    const read = (await c.call("read", { mode: "content+links" })).data as { links: Array<{ ref: string; kind: string; text: string }> };
+    const options = read.links.filter((l) => ["Discussion", "Question", "Resources"].includes(l.text));
+    assert.equal(options.length, 3, JSON.stringify(read.links));
+    assert.ok(options.every((o) => o.kind === "clickable"));
+    assert.equal((await c.call("click", { ref: options[0]!.ref })).state, "ok");
+    let page = (await c.call("read")).data as { content: string };
+    assert.match(page.content, /Selected flair: Discussion/);
+    assert.equal((await c.call("click", { text: "question" })).state, "ok");
+    page = (await c.call("read")).data as { content: string };
+    assert.match(page.content, /Selected flair: Question/);
+    // Something on top of it: the element check before click refuses.
+    const covered = await c.call("click", { text: "Hidden behind" });
+    assert.equal(covered.state, "error");
+    assert.match(String(covered.message), /on top of/);
+    assert.equal((await c.call("click", { text: "No such option" })).state, "error");
+    assert.equal((await c.call("click", {})).state, "error");
+  });
 });

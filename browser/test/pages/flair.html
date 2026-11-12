@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Choose flair</title>
+<style>
+  .flairoption { cursor: pointer; padding: 6px; border: 1px solid #ccc; margin: 4px; list-style: none; }
+  .flairoption .tag { font-weight: bold; }
+  #cover { position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: rgba(0,0,0,.4); }
+</style></head>
+<body><h1>Submit a post</h1>
+<p>Selected flair: <span id="selected">none</span></p>
+<ul id="flairs">
+  <li class="flairoption" data-id="1"><span class="tag">Discussion</span></li>
+  <li class="flairoption" data-id="2"><span class="tag">Question</span></li>
+  <li class="flairoption" data-id="3"><span class="tag">Resources</span></li>
+</ul>
+<div style="height: 1400px"></div>
+<li class="flairoption" id="covered" style="position: fixed; bottom: 10px; left: 10px">Hidden behind</li>
+<div id="cover"></div>
+<script>
+  for (const li of document.querySelectorAll('.flairoption')) li.addEventListener('click', () => { document.getElementById('selected').textContent = li.innerText.trim(); });
+</script>
+</body></html>

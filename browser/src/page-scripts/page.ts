@@ -24,7 +24,7 @@ export interface ExtractParams {
 
 export interface LinkItem {
   ref: string;
-  kind: "link" | "button" | "input" | "select" | "textarea";
+  kind: "link" | "button" | "input" | "select" | "textarea" | "option" | "clickable";
   text: string;
   href?: string;
   region: string;
@@ -61,7 +61,12 @@ export interface ScrollState {
 }
 
 const REF_ATTR = "data-cb-ref";
-const INTERACTIVE = 'a[href], button, input:not([type=hidden]), textarea, select, summary, [role=button], [role=link], [role=tab], [role=menuitem]';
+const INTERACTIVE =
+  'a[href], button, input:not([type=hidden]), textarea, select, summary, label, [onclick], [tabindex]:not([tabindex="-1"]), ' +
+  "[role=button], [role=link], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=option], [role=radio], [role=checkbox], [role=switch], [role=treeitem]";
+/** Elements a person sees as clickable without any of the above (a pointer cursor on a styled list item). */
+const CLICKABLE_ATTR = "data-cb-clickable";
+const MAX_SCAN = 6000;
 const REGION_SELECTOR = "header, nav, main, aside, footer, form, dialog, [role=banner], [role=navigation], [role=main], [role=complementary], [role=contentinfo], [role=dialog]";
 
 let refCounter = 0;
@@ -83,13 +88,30 @@ function isVisible(el: Element): boolean {
 
 /** Gives every visible interactive element a stable ref. Existing refs are kept. */
 export function tagRefs(root: ParentNode = document): void {
-  for (const el of root.querySelectorAll(INTERACTIVE)) {
-    if (!el.hasAttribute(REF_ATTR) && isVisible(el)) el.setAttribute(REF_ATTR, `e${++refCounter}`);
-  }
-  // Keep the counter ahead of refs from an earlier run in this document.
+  // Catch up with refs from an earlier run in this document first, so new refs never repeat one.
   for (const el of root.querySelectorAll(`[${REF_ATTR}]`)) {
     const n = Number(el.getAttribute(REF_ATTR)!.slice(1));
     if (n > refCounter) refCounter = n;
+  }
+  for (const el of root.querySelectorAll(INTERACTIVE)) {
+    if (!el.hasAttribute(REF_ATTR) && isVisible(el)) el.setAttribute(REF_ATTR, `e${++refCounter}`);
+  }
+  // What a person sees as clickable: the pointer cursor starts on this element (not inherited from a
+  // clickable parent), it's a sensible size, and it isn't inside something that already has a ref.
+  let scanned = 0;
+  for (const el of (root as Document | Element).querySelectorAll("body *")) {
+    if (++scanned > MAX_SCAN) break;
+    if (el.hasAttribute(REF_ATTR) || !(el instanceof HTMLElement)) continue;
+    if (getComputedStyle(el).cursor !== "pointer") continue;
+    const parent = el.parentElement;
+    if (parent && getComputedStyle(parent).cursor === "pointer") continue;
+    if (el.closest(`[${REF_ATTR}]`)) continue;
+    const r = el.getBoundingClientRect();
+    // Up to a full-width row (options and list items often are), but not a whole section of the page.
+    if (r.width < 4 || r.height < 4 || r.width > innerWidth + 1 || r.height > Math.min(600, innerHeight * 0.75) || !isVisible(el)) continue;
+    if (!(el.innerText ?? "").trim() && !el.getAttribute("aria-label") && !el.getAttribute("title") && !el.querySelector("img, svg")) continue;
+    el.setAttribute(REF_ATTR, `e${++refCounter}`);
+    el.setAttribute(CLICKABLE_ATTR, "");
   }
 }
 
@@ -125,6 +147,9 @@ function textOf(el: Element): string {
 
 function kindOf(el: Element): LinkItem["kind"] {
   const t = el.tagName.toLowerCase();
+  const role = el.getAttribute("role") ?? "";
+  if (/^(option|radio|menuitemradio|menuitemcheckbox|checkbox|switch|treeitem)$/.test(role)) return "option";
+  if (el.hasAttribute(CLICKABLE_ATTR) || (t !== "a" && t !== "button" && t !== "input" && t !== "select" && t !== "textarea" && !role && (el.hasAttribute("onclick") || el.hasAttribute("tabindex")))) return "clickable";
   if (t === "a" || el.getAttribute("role") === "link") return "link";
   if (t === "input") return (el as HTMLInputElement).type === "submit" || (el as HTMLInputElement).type === "button" ? "button" : "input";
   if (t === "select") return "select";
@@ -292,10 +317,42 @@ export function locateRef(p: { ref: string }): { x: number; y: number; tag: stri
   return { x: r.left + r.width / 2, y: r.top + r.height / 2, tag: el.tagName.toLowerCase(), text: textOf(el) };
 }
 
+/**
+ * Fallback for clicking what a person sees: the visible element whose text matches, preferring an exact
+ * match and the clickable thing around it. Gives it a ref so the normal click (and its checks) can follow.
+ */
+export function findByText(p: { text: string; nth?: number }): { ref: string; text: string } | null {
+  tagRefs();
+  const want = p.text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!want) return null;
+  const exact: Element[] = [];
+  const partial: Element[] = [];
+  let scanned = 0;
+  for (const el of document.querySelectorAll("body *")) {
+    if (++scanned > MAX_SCAN * 2) break;
+    if (!(el instanceof HTMLElement) || !isVisible(el)) continue;
+    const own = (el.innerText ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!own || own.length > want.length * 4 + 40) continue;
+    // Innermost element carrying the text: skip if a child carries it too.
+    const childHas = [...el.children].some((c) => ((c as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim().toLowerCase().includes(want));
+    if (childHas) continue;
+    if (own === want || el.getAttribute("aria-label")?.toLowerCase() === want) exact.push(el);
+    else if (own.includes(want)) partial.push(el);
+  }
+  const pick = (exact.length ? exact : partial)[p.nth ?? 0];
+  if (!pick) return null;
+  const target = pick.closest(`[${REF_ATTR}]`) ?? pick;
+  if (!target.hasAttribute(REF_ATTR)) {
+    target.setAttribute(REF_ATTR, `e${++refCounter}`);
+    target.setAttribute(CLICKABLE_ATTR, "");
+  }
+  return { ref: target.getAttribute(REF_ATTR)!, text: textOf(target) };
+}
+
 /** Element under a point, for the check before click (Access Model L4). */
 export function refAtPoint(p: { x: number; y: number }): string | null {
   const el = document.elementFromPoint(p.x, p.y);
   return el?.closest(`[${REF_ATTR}]`)?.getAttribute(REF_ATTR) ?? null;
 }
 
-(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, domTokens };
+(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, domTokens, findByText };

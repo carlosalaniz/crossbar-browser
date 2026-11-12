@@ -93,7 +93,7 @@ async function dispatch(s: Services, a: AgentSession, name: ToolName, args: Reco
     case "read":
       return a.read(args.mode, args.maxChars);
     case "click":
-      return a.click(args.ref);
+      return args.ref ? a.click(args.ref) : a.clickText(String(args.text), Number(args.nth ?? 0));
     case "type":
       return a.type(args.ref, args.text, args.submit);
     case "scroll":

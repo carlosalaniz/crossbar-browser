@@ -72,6 +72,8 @@ export interface Tab {
   back(): Promise<NavResult>;
   currentUrl(): Promise<string>;
   extract(p?: ExtractParams): Promise<ExtractResult>;
+  /** The visible element whose text matches (exact first, then partial), given a ref; null if none. */
+  findByText(text: string, nth?: number): Promise<{ ref: string; text: string } | null>;
   /** Clicks the element; returns what was under the click (for approval cards). */
   click(ref: string): Promise<{ tag: string; text: string } | void>;
   type(ref: string, text: string, submit: boolean): Promise<void>;
@@ -348,6 +350,10 @@ class CdpTab implements Tab {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base }, this.session);
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base }, this.session);
     return { tag: at.tag, text: at.text };
+  }
+
+  findByText(text: string, nth = 0): Promise<{ ref: string; text: string } | null> {
+    return this.b.scripts.call(this.session, "findByText", { text, nth });
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {

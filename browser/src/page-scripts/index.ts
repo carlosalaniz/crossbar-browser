@@ -28,7 +28,7 @@ export function pageBundle(): Promise<string> {
   return bundled;
 }
 
-type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens";
+type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens" | "findByText";
 
 export class PageScripts {
   private readonly contexts = new Map<string, number>();

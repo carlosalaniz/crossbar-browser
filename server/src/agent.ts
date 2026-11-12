@@ -731,7 +731,9 @@ export class AgentSession {
     this.lastNavRefusal = null;
     // Navigating away leaves the wall behind; the ticket stays for the person, but the tab speaks again.
     for (const [ticketId, tabId] of this.blockedTabTickets) if (tabId === tab.id) this.blockedTabTickets.delete(ticketId);
-    const nav = await tab.navigate(url);
+    // A link to it on the current page is clicked, as a person would follow it, so the site sees a click
+    // and a real referrer instead of a jump to an address (audit S09; live: 9 straight jumps, 12 Nov 2026).
+    const nav = (await tab.followLink(url).catch(() => null)) ?? (await tab.navigate(url));
     const navError = (nav as { error?: string }).error;
     if (navError && /BLOCKED_BY_CLIENT/.test(navError) && this.lastNavRefusal) {
       const { url: where, rule } = this.lastNavRefusal as { url: string; rule: string };

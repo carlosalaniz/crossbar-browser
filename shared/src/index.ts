@@ -79,7 +79,8 @@ const Until = z
 export const TOOLS = {
   open: def({
     name: "open",
-    description: "Open a URL in this session's tab. The site's level decides the profile: read opens anonymously, read_as_you uses your logins. Returns the page title and URL; call read for content.",
+    description:
+      "Open a URL in this session's tab. The site's level decides the profile: read opens anonymously, read_as_you uses your logins. Returns the page title and URL; call read for content. If the URL is a link on the current page, Crossbar clicks that link, as a person would. Go to pages the way a person does (from the list, then each item) rather than guessing addresses.",
     input: z.object({ url: z.string().url().describe("http(s) URL to open.") }),
     minToken: "read",
     class: "read",

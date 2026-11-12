@@ -191,6 +191,18 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal(await run("sw-hold", "hold"), 0, "a held write from a worker must not go out");
   });
 
+  test("open() follows a link on the current page by clicking it; otherwise it opens the address (audit S09)", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: site.url("a.test", "/pages/links") });
+    const followed = await c.call("open", { url: site.url("a.test", "/pages/landing") });
+    assert.equal(followed.state, "ok", JSON.stringify(followed));
+    assert.match(((await c.call("read")).data as { content: string }).content, new RegExp(`referrer: ${site.url("a.test", "/pages/links").replace(/[.?]/g, "\\$&")}`));
+    // A link that opens a new tab isn't followed by clicking; the address is opened in this tab.
+    await c.call("open", { url: site.url("a.test", "/pages/links") });
+    await c.call("open", { url: site.url("a.test", "/pages/landing?n=2") });
+    assert.match(((await c.call("read")).data as { content: string }).content, /referrer: none/);
+  });
+
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/flair") });

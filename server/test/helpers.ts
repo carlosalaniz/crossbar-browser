@@ -160,6 +160,9 @@ export class FakeTab implements Tab {
   async findByText() {
     return null;
   }
+  async findControls() {
+    return [];
+  }
   allowPopups() {}
   onPopup() {
     return () => {};

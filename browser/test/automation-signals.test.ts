@@ -34,8 +34,9 @@ describe("automation signals", { skip: skipReason }, () => {
     await evaluate(env, s, `window.__muts = []; new MutationObserver((l) => { for (const m of l) window.__muts.push(m.type + ':' + (m.attributeName || '')); }).observe(document, { subtree: true, childList: true, attributes: true }); 1`);
     const r = await scripts.extract(s, { includeLinks: true });
     await scripts.collectItems(s, {});
-    const found = await scripts.call<{ ref: string } | null>(s, "findByText", { text: "Reply" });
-    assert.ok(found);
+    const found = await scripts.call<Array<{ ref?: string }>>(s, "findControls", { query: "Reply", textFallback: true });
+    assert.ok(found[0]?.ref);
+    await scripts.call(s, "findControls", { query: "nothing like this" });
     await scripts.call(s, "checkPoint", { ref: r.links![0]!.ref, x: 1, y: 1 });
     await new Promise((res) => setTimeout(res, 50));
     assert.deepEqual(await evaluate(env, s, "window.__muts"), []);

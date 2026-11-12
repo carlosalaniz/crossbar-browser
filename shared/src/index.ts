@@ -100,14 +100,14 @@ export const TOOLS = {
   click: def({
     name: "click",
     description:
-      "Click an element: by ref from read (preferred), or by its visible text when it has no ref (e.g. an option in a custom menu). Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
+      "Click an element: by ref from read or find (preferred), or by what it says (its text or label, e.g. an icon button's \"Settings\"). If you don't know where a control is, call find first. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
     input: z
       .object({
-        ref: z.string().regex(/^e\d+$/).optional().describe("Element ref from read, e.g. e12."),
+        ref: z.string().regex(/^e\d+$/).optional().describe("Element ref from read or find, e.g. e12."),
         text: z.string().min(1).max(200).optional().describe("Fallback: the visible text of what to click, as a person reads it (exact match first, then partial)."),
         nth: z.number().int().min(0).max(50).default(0).describe("With text: which match, if several (0 = first on the page)."),
       })
-      .refine((v) => !!v.ref || !!v.text, { message: "Give a ref or a text." }),
+      .refine((v) => !!v.ref || !!v.text, { message: 'Give ref (e.g. "e12", from read or find) or text (what the control says, e.g. "Settings").' }),
     minToken: "read",
     class: "act",
   }),
@@ -128,6 +128,18 @@ export const TOOLS = {
     input: z.object({
       until: Until,
       selector: z.string().max(200).optional().describe("CSS selector for items. Defaults to the site adapter's, else article, [role=article], li."),
+    }),
+    minToken: "read",
+    class: "read",
+  }),
+  find: def({
+    name: "find",
+    description:
+      "Find controls on the current page by what they're called (text or label, icon buttons included): returns each match's ref, role, region and whether a click can reach it now — visible, offscreen (click scrolls to it), covered (and by what, with its ref), hidden (and the control that opens it, e.g. a menu button), or disabled. Cheaper than reading a big page.",
+    input: z.object({
+      query: z.string().min(1).max(100).describe('What the control is called, e.g. "Settings", "Archive", "Next page".'),
+      role: z.enum(["button", "link", "field", "menuitem", "tab", "checkbox", "other", "any"]).default("any").describe("Only controls of this kind."),
+      limit: z.number().int().min(1).max(20).default(8),
     }),
     minToken: "read",
     class: "read",

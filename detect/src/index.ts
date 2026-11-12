@@ -84,7 +84,18 @@ export const SIGNATURES: Signature[] = [
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
   { id: "reddit-humanity", kind: "captcha", vendor: "reddit", text: [/Prove your humanity/i], maxTextLength: 3000 },
   { id: "reddit-blocked", kind: "soft_block", vendor: "reddit", text: [/You've been blocked by network security|whoa there, pardner/i], maxTextLength: 3000 },
-  { id: "login-url", kind: "login", vendor: "generic", url: [/\/(login|signin|sign-in|log-in|auth\/login|accounts\/login)(\/|\?|$)/i] },
+  { id: "login-url", kind: "login", vendor: "generic", url: [/\/(login|logon|signin|signon|sign-in|sign-on|log-in|log-on|auth\/login|accounts\/login)(\.\w{1,5})?(\/|\?|#|$)/i] },
+  // A short page on a login host (login.example.com, sso., auth., passport.): sites redirect there to sign in.
+  { id: "login-host", kind: "login", vendor: "generic", url: [/^https?:\/\/(login|signin|sso|auth|passport)\.[^/]+/i], maxTextLength: 4000 },
+  // Email-first sign-in: step one asks only for an email or phone ("Continue"); the password field comes on
+  // step two, so the password-field signal can't see it (made-in-china.com, 12 Nov 2026).
+  {
+    id: "identifier-first-login",
+    kind: "login",
+    vendor: "generic",
+    text: [/\b(sign in|log in) (or create (an |your )?account|to (continue|your account))\b|\b(sign in|log in)\b[^\n]{0,40}\n(?:[^\n]{0,80}\n){0,3}[^\n]{0,40}\b(email( address)?|phone( number)?|username)\b[^\n]{0,40}\n(?:[^\n]{0,40}\n)?\s*(continue|next)\b/i],
+    maxTextLength: 1500,
+  },
   // Truncated content behind an app gate. Limited to shortish pages: a full page with an "Open in app"
   // banner isn't a soft block.
   {

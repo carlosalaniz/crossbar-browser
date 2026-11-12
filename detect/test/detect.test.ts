@@ -105,3 +105,24 @@ test("a captcha inside a submit form is not a wall (Reddit's submit page, seen l
   assert.equal(detect({ ...submit, hasPasswordField: true })?.kind, "captcha");
   assert.equal(detect({ ...base, url: "https://www.google.com/sorry/index", textLength: 400, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] })?.kind, "captcha");
 });
+
+{
+  // Live finding (12 Nov 2026): made-in-china.com sent the agent to an email-first sign-in page with no
+  // password field and a /logon.do URL, and no login request reached the person.
+  const mic = { ...base, url: "https://login.made-in-china.com/logon.do", title: "Sign In | Made-in-China.com", textLength: 260, textSample: "English\nSource & trade with trust\nSign in and easily connect with verified suppliers\nSign in or create account\nEmail address\nContinue\nOR\nContinue with Google\nContinue with Facebook\nSign in with QR Code" };
+  test("email-first sign-in with no password field is a login wall", () => {
+    const b = detect(mic);
+    assert.equal(b?.kind, "login");
+    assert.ok(b!.evidence.some((e) => e.startsWith("login-host")) && b!.evidence.some((e) => e.startsWith("identifier-first-login")) && b!.evidence.some((e) => e.startsWith("login-url")), b!.evidence.join(" | "));
+  });
+  test("each signal alone: logon path, login host, email-first text", () => {
+    assert.equal(detect({ ...base, url: "https://shop.example/account/logon.do", textLength: 5000 })?.kind, "login");
+    assert.equal(detect({ ...base, url: "https://sso.example.org/", textLength: 900 })?.kind, "login");
+    assert.equal(detect({ ...base, url: "https://example.org/start", textLength: 300, textSample: "Welcome back\nLog in\nEmail\nNext" })?.kind, "login");
+  });
+  test("not a wall: a long page on a login host, a nav 'Sign in' link on a short page, a logbook path", () => {
+    assert.equal(detect({ ...base, url: "https://auth.example.org/docs/guide", textLength: 9000 }), null);
+    assert.equal(detect({ ...base, textLength: 600, textSample: "Home\nSign in\nOur story\nWe make bikes in Ohio. Write to us by email." }), null);
+    assert.equal(detect({ ...base, url: "https://example.org/blog/logbook", textLength: 600 }), null);
+  });
+}

@@ -49,6 +49,8 @@ describe("web app flow", { skip: skipReason }, () => {
     s = (await ui.cdp.send("Target.attachToTarget", { targetId, flatten: true })).sessionId;
     await ui.cdp.send("Page.enable", undefined, s);
     await ui.cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, s);
+    // A phone: touch, so the app takes its phone layout (pointer: coarse).
+    await ui.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 }, s);
   });
   after(async () => {
     await ui?.close();

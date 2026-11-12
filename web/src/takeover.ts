@@ -6,7 +6,7 @@
 //   whole, as it does on any site.
 // - On desktop, mouse and keyboard go straight to the page.
 // The device never changes (ADR 0015); input is ordered and bound to the tab it was aimed at (ADR 0016).
-import { clientToPage, fieldAt, fitSize, keyFor, originOf, textEdit, zoomToBox, type PageBox } from "./logic.ts";
+import { clampPan, clientToPage, dragPanThenScroll, fieldAt, fitSize, keyFor, originOf, panToField, textEdit, zoomToBox, type PageBox } from "./logic.ts";
 
 type Child = Node | string | null | undefined | false | Child[];
 export interface TakeoverDeps {
@@ -33,7 +33,7 @@ interface InputReply {
 }
 
 const TAP_SLOP = 10;
-const KIND_LABEL: Record<Kind, string> = { text: "Text", password: "Password", otp: "One-time code", frame: "Sign-in box" };
+const KIND_LABEL: Record<Kind, string> = { text: "Text", password: "Password", otp: "One-time code", frame: "Sign-in box (hidden as you type)" };
 const MODS = (e: KeyboardEvent | MouseEvent | WheelEvent) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
 const hostOf = (u: string) => {
   try {
@@ -74,7 +74,14 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   let fields: ViewState["fields"] = [];
   let typingKind: Kind | null = null;
   const coarse = matchMedia("(pointer: coarse)").matches;
+  // On a phone the view behaves like a phone screen: the page fills the width, the buttons and keyboard slide
+  // over its lower part, and it scrolls so what you type into sits above them. On desktop it's a window.
+  const phone = coarse;
   const mobileSite = () => page.w <= 600;
+  let base = 1; // phone: image px per page px, so the page fills the view's width
+  let z = 1; // phone: zoom on top of that
+  let pan = { x: 0, y: 0 };
+  let typingBox: PageBox | null = null;
 
   // ---- elements ----
   const img = h("img", { class: "tk-img", alt: "The page you're controlling", draggable: "false" }) as HTMLImageElement;
@@ -93,10 +100,13 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   const kbd = h("input", { class: "tk-kbd", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "Type into the page", enterkeyhint: "next" }) as HTMLInputElement;
   const typingLabel = h("div", { class: "tk-typing-label" });
   const fillBtn = h("button", { class: "tk-btn tk-fill", type: "button", hidden: true, onclick: () => fill() }, "🔑 Fill");
+  // Hidden fields (passwords, and fields inside a sign-in frame Crossbar can't see into) show dots; the eye
+  // shows them. Hidden also keeps the phone keyboard from suggesting or learning what you type.
+  const eyeBtn = h("button", { class: "tk-btn tk-eye", type: "button", hidden: true, "aria-label": "Show what you typed", onpointerdown: (e: Event) => e.preventDefault(), onclick: () => (kbd.type = kbd.type === "password" ? "text" : "password") }, "👁");
   const typingBar = h(
     "div",
     { class: "tk-typing", hidden: true },
-    h("div", { class: "tk-typing-field" }, h("div", { class: "tk-typing-main" }, typingLabel, kbd), fillBtn),
+    h("div", { class: "tk-typing-field" }, h("div", { class: "tk-typing-main" }, typingLabel, kbd), eyeBtn, fillBtn),
     h(
       "div",
       { class: "tk-row" },
@@ -115,6 +125,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       type: "button",
       onclick: async () => {
         await api("POST", `/api/tickets/${id}/not-a-wall`).catch((e) => (err.textContent = (e as Error).message));
+        finished = true;
         location.hash = "#/";
       },
     }, "Not a wall — let the agent go on"),
@@ -125,13 +136,23 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     h("button", { class: "tk-btn", type: "button", onclick: () => startTyping(null, true) }, "⌨︎ Keyboard"),
     h("button", { class: "tk-btn", type: "button", onclick: () => (more.hidden = !more.hidden) }, "More"),
   );
+  const dock = h("div", { class: "tk-dock" }, err, typingBar, more, footer);
   const root = h(
     "div",
-    { class: "tk" },
+    { class: phone ? "tk tk-phone" : "tk" },
     h(
       "header",
       { class: "tk-bar" },
-      h("a", { class: "tk-close", href: `#/tickets/${id}`, "aria-label": "Leave (the page stays as it is)" }, "✕"),
+      h("a", {
+        class: "tk-close",
+        href: `#/tickets/${id}`,
+        "aria-label": "Leave without finishing (the request stays open)",
+        onclick: async (e: Event) => {
+          e.preventDefault();
+          await release();
+          location.hash = `#/tickets/${id}`;
+        },
+      }, "✕"),
       // The real origin, drawn by Crossbar outside the stream, so the page can't fake it.
       h("div", { class: "tk-origin" }, lock, originText),
       h("button", { class: "tk-btn primary tk-done", type: "button", onclick: () => void done() }, "Done"),
@@ -139,21 +160,28 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     h("div", { class: "tk-sub" }, h("span", {}, `${claim.agent ?? "The agent"} is paused and sees nothing while you're in control.`), status),
     banner,
     view,
-    err,
-    typingBar,
-    more,
-    footer,
+    dock,
   );
   d.render(root);
 
-  // ---- staying above the phone keyboard ----
-  // The window takes the visible part of the screen: when the keyboard opens it shrinks, so the typing bar
-  // sits right above the keyboard and the zoomed form stays in view, never under it.
+  // Leaving without Done (✕, or going elsewhere in the app) hands the ticket back, so it can be taken again.
+  let finished = false;
+  const release = async () => {
+    if (finished) return;
+    finished = true;
+    await fetch(`/api/tickets/${id}/release`, { method: "POST", keepalive: true, headers: { "x-crossbar": "1" } }).catch(() => {});
+  };
+  deps.onCleanup(() => void release());
+
+  // ---- the keyboard slides over the page ----
+  // The page stays full height behind it, like on a phone; the buttons ride on top of the keyboard, and the
+  // page scrolls so the field you're typing into sits just above them.
   const vv = window.visualViewport;
   const fitToScreen = () => {
-    if (vv) {
-      root.style.height = `${vv.height}px`;
+    if (vv && phone) {
+      const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       root.style.transform = `translateY(${vv.offsetTop}px)`;
+      dock.style.bottom = `${covered}px`;
     }
     layout();
   };
@@ -165,13 +193,39 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   });
 
   // ---- layout and zoom ----
+  const viewWidth = () => view.getBoundingClientRect().width;
+  /** The part of the view not covered by the buttons and keyboard. */
+  const visibleH = () => Math.max(60, dock.getBoundingClientRect().top - view.getBoundingClientRect().top);
+  const phoneView = () => ({ w: viewWidth(), visibleH: visibleH() });
+  const applyPhone = () => {
+    pan = clampPan(pan, z, { w: page.w * base, h: page.h * base }, phoneView());
+    stage.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${z})`;
+    badge.hidden = z <= 1.01;
+    badge.textContent = `${Math.round(z * base * 100)}%`;
+  };
+  const focusPhone = (box: PageBox) => {
+    typingBox = box;
+    // A desktop-width page zooms in to the field's form; a narrow page is already readable at full width.
+    if (page.w > 700) z = Math.max(z, Math.min(4, (viewWidth() * 0.94) / Math.max(1, box.w * base)));
+    pan = panToField(box, base, z, phoneView());
+    applyPhone();
+  };
   const applyTransform = () => {
+    if (phone) return applyPhone();
     stage.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
     const pct = Math.round(zoom.s * fit * 100);
     badge.hidden = zoom.s <= 1.01;
     badge.textContent = zoomTarget ? `Zoomed to the form · ${pct}%` : `${pct}%`;
   };
   const layout = () => {
+    if (phone) {
+      base = viewWidth() / page.w;
+      img.style.width = `${Math.round(page.w * base)}px`;
+      img.style.height = `${Math.round(page.h * base)}px`;
+      if (typingBox && typingKind) focusPhone(typingBox);
+      else applyPhone();
+      return;
+    }
     const r = view.getBoundingClientRect();
     const f = fitSize(page, { w: r.width, h: r.height }, coarse);
     fit = f.scale;
@@ -181,6 +235,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     else applyTransform();
   };
   const zoomTo = (target: PageBox) => {
+    if (phone) return focusPhone(target);
     zoomTarget = target;
     const v = view.getBoundingClientRect();
     const s = stage.getBoundingClientRect();
@@ -191,7 +246,10 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   };
   const wholePage = () => {
     zoomTarget = null;
+    typingBox = null;
     zoom = { s: 1, x: 0, y: 0 };
+    z = 1;
+    pan = { x: 0, y: 0 };
     applyTransform();
   };
   const ro = new ResizeObserver(() => layout());
@@ -284,6 +342,11 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     fields = v.fields;
     if (v.focus) {
       startTyping(v.focus, false);
+      if (phone) {
+        // Follow the field itself (the page moved it, or focus moved on), not the whole form.
+        if (!typingBox || Math.abs(typingBox.x - v.focus.x) + Math.abs(typingBox.y - v.focus.y) > 6) focusPhone(v.focus.area && page.w > 700 ? { ...v.focus.area, y: v.focus.y, h: v.focus.h } : v.focus);
+        return;
+      }
       const target = v.focus.area ?? pad(v.focus);
       // Re-zoom only if the form moved (the page scrolled it, or a new field took focus).
       if (!zoomTarget || Math.abs(zoomTarget.x - target.x) + Math.abs(zoomTarget.y - target.y) + Math.abs(zoomTarget.w - target.w) > 6) zoomTo(target);
@@ -297,8 +360,10 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     const kind = f?.kind ?? typingKind ?? "text";
     if (kind !== typingKind) {
       kbd.value = typed = "";
-      kbd.type = kind === "password" ? "password" : "text";
-      kbd.autocomplete = kind === "password" ? "current-password" : kind === "otp" ? "one-time-code" : "on";
+      const hidden = kind === "password" || kind === "frame";
+      kbd.type = hidden ? "password" : "text";
+      eyeBtn.hidden = !hidden;
+      kbd.autocomplete = hidden ? "current-password" : kind === "otp" ? "one-time-code" : "on";
       kbd.inputMode = kind === "otp" ? "numeric" : "text";
     }
     typingKind = kind;
@@ -315,6 +380,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   };
   const stopTyping = () => {
     typingKind = null;
+    typingBox = null;
     typingBar.hidden = true;
     footer.hidden = false;
     kbd.value = typed = "";
@@ -441,7 +507,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       if (gesture === "touch") void send({ type: "touchCancel", touchPoints: [] });
       gesture = "pinch";
       zoomTarget = null;
-      pinch0 = { ...mid(), zoom: { ...zoom } };
+      pinch0 = { ...mid(), zoom: phone ? { s: z, x: pan.x, y: pan.y } : { ...zoom } };
     } else if (touches.size === 1) {
       gesture = "tap";
       // A mobile site gets the real touch sequence as it happens.
@@ -465,8 +531,11 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       // Keep the point between the fingers under the fingers.
       const ox = pinch0.mx - r.left;
       const oy = pinch0.my - r.top;
-      zoom = { s, x: m.mx - r.left - ((ox - pinch0.zoom.x) * s) / pinch0.zoom.s, y: m.my - r.top - ((oy - pinch0.zoom.y) * s) / pinch0.zoom.s };
-      if (s === 1) zoom = { s: 1, x: 0, y: 0 };
+      const next = { s, x: m.mx - r.left - ((ox - pinch0.zoom.x) * s) / pinch0.zoom.s, y: m.my - r.top - ((oy - pinch0.zoom.y) * s) / pinch0.zoom.s };
+      if (phone) {
+        z = s;
+        pan = { x: next.x, y: next.y };
+      } else zoom = s === 1 ? { s: 1, x: 0, y: 0 } : next;
       applyTransform();
       return;
     }
@@ -479,10 +548,19 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     }
     if (gesture === "tap" && Math.hypot(t.x - t.x0, t.y - t.y0) > TAP_SLOP) gesture = "scroll";
     if (gesture === "scroll") {
-      // One finger on a desktop site scrolls the page under the finger, like a trackpad.
+      // One finger: on a phone the view moves first, as far as the page's edge, and what's left scrolls the
+      // page under the finger, like a trackpad.
+      let rest = { x: dx, y: dy };
+      if (phone) {
+        const r = dragPanThenScroll(pan, rest, z, { w: page.w * base, h: page.h * base }, phoneView());
+        pan = r.pan;
+        rest = r.scroll;
+        applyPhone();
+      }
+      if (Math.abs(rest.x) + Math.abs(rest.y) < 0.5) return;
       const p = pointAt({ clientX: t.x0, clientY: t.y0 }) ?? { x: page.w / 2, y: page.h / 2 };
       const k = page.w / img.getBoundingClientRect().width;
-      void send({ type: "mouseWheel", ...p, deltaX: -dx * k, deltaY: -dy * k });
+      void send({ type: "mouseWheel", ...p, deltaX: -rest.x * k, deltaY: -rest.y * k });
     }
   });
   const endTouch = async (e: PointerEvent) => {
@@ -531,6 +609,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     try {
       await queue;
       const r = await api<{ verified: boolean; still?: string }>("POST", `/api/tickets/${id}/done`);
+      finished = true; // either resolved, or the verifier already put it back to open
       if (r.verified) location.hash = "#/";
       else
         err.replaceChildren(

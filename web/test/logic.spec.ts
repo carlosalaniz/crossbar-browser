@@ -86,3 +86,31 @@ describe("take-control typing", () => {
     expect(keyFor("é")).toBeNull();
   });
 });
+
+import { clampPan, panToField, dragPanThenScroll } from "../src/logic.ts";
+
+describe("phone view behaves like a screen", () => {
+  const img = { w: 390, h: 845 }; // a 500x1083 page drawn 390 wide
+  const view = { w: 390, visibleH: 700 };
+  test("the page covers the width and can't be dragged past its edges", () => {
+    expect(clampPan({ x: 50, y: 40 }, 1, img, view)).toEqual({ x: 0, y: 0 });
+    expect(clampPan({ x: -50, y: -1000 }, 1, img, view)).toEqual({ x: 0, y: 700 - 845 });
+    // Zoomed 2x: can pan sideways within the page, not beyond.
+    expect(clampPan({ x: -1000, y: 0 }, 2, img, view).x).toBe(390 - 780);
+    // A page shorter than the view stays at the top.
+    expect(clampPan({ x: 0, y: -50 }, 1, { w: 390, h: 300 }, view)).toEqual({ x: 0, y: 0 });
+  });
+  test("typing: the field moves to 40% of what's visible above the keyboard", () => {
+    const base = 390 / 500;
+    const keyboardUp = { w: 390, visibleH: 330 };
+    const p = clampPan(panToField({ x: 40, y: 700, w: 420, h: 40 }, base, 1, keyboardUp), 1, img, keyboardUp);
+    const fieldCentreOnScreen = p.y + 720 * base;
+    expect(fieldCentreOnScreen).toBeCloseTo(330 * 0.4, 5);
+  });
+  test("a drag pans the view first, then scrolls the page with what's left", () => {
+    const r = dragPanThenScroll({ x: 0, y: -100 }, { x: 0, y: -100 }, 1, img, view);
+    expect(r.pan.y).toBe(-145); // the bottom edge reached
+    expect(r.scroll.y).toBe(-55); // the rest scrolls the page
+    expect(dragPanThenScroll({ x: 0, y: 0 }, { x: 0, y: 30 }, 1, img, view)).toEqual({ pan: { x: 0, y: 0 }, scroll: { x: 0, y: 30 } });
+  });
+});

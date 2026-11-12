@@ -5,7 +5,7 @@
 This stage does everything in [the automation-signal plan](automation-signal-plan.md) (PRs A–H there) plus five owner requests:
 
 1. A better UI, designed for both phone and desktop.
-2. Simpler accounts: create a user and get a random password. No setup code from the logs.
+2. Simpler accounts: a default `admin` / `admin` owner account on first start, no setup code from the logs, no open sign-up.
 3. The dev stack reachable on the local network, with notification links that open on the owner's phone.
 4. Approval notifications that are clearer and less frequent.
 5. A take-control page that feels like using a browser window: phone first, good on desktop.
@@ -53,7 +53,7 @@ Steps 2 and 3 come early because every later UI and notification step is tested 
 
 Everything in signal plan A (ADRs 0015 device identity, 0016 human input transport, 0017 concurrency; README and threat model for credential fields), plus:
 
-- **ADR 0018, simple accounts.** Supersedes the setup-code part of ADR 0008. Crossbar runs behind the owner's own access control (Harbor or a reverse proxy). Sign-up is a username; the server generates a random password and shows it once. The first user is the owner; later users are household members with their own isolated browser profiles. Sign-up can be turned off with a setting once the household exists. 2FA stays optional. `reset-owner` stays as the recovery path.
+- **ADR 0018, simple accounts.** Supersedes the setup-code part of ADR 0008. Crossbar runs behind the owner's own access control (Harbor or a reverse proxy). On first start the server creates the owner account `admin` with password `admin`. There is no public sign-up; the owner adds household members, each with their own isolated browser profiles. The default password must be changed before the app is exposed beyond a trusted network; the app warns until it is (step 3). Sign-in is username and password only, for people; agents use MCP tokens. Passkeys and TOTP are hidden in the UI for now (passkeys can't work over plain-HTTP LAN anyway). Their server code stays but is unreachable from the UI, so it can come back without a rewrite; with no second factor enrolled, the fresh-check before loosening approvals asks for the password again. `reset-owner` stays as the recovery path, and resets to a password the operator types.
 - **ADR 0019, approval notifications.** The rules in step 8: what notifies, what doesn't, merging, and why "Approve" never goes in the notification itself.
 
 ### Step 2: LAN dev stack and LAN notification links
@@ -63,19 +63,25 @@ Today the app listens on all interfaces, but `CROSSBAR_ORIGIN` defaults to `http
 - `dev:local` and `dev` detect the machine's LAN IPv4 address (first non-internal interface; `CROSSBAR_LAN_HOST` overrides) and set `CROSSBAR_ORIGIN=http://<lan-ip>:<port>`. They print both URLs and a QR code of the LAN URL in the terminal.
 - `CROSSBAR_ORIGIN` accepts a comma-separated list. The first entry is the public origin used in links; CSRF accepts any listed origin. `http://localhost:<port>` is always added in dev.
 - Notification links (`Click`, actions) use the public origin, i.e. the LAN address in dev.
-- Passkeys need a secure context, which `http://<lan-ip>` isn't. The web app hides passkey options when `!isSecureContext` and says why. TOTP and passwords work everywhere.
 - Session cookies stay non-`Secure` over plain HTTP in dev only; production behind HTTPS keeps `Secure`.
 - The test site stays on the internal network or loopback; only the app port is on the LAN.
 - **Tests:** CSRF accepts listed origins and refuses others; notification links use the first origin; the dev script's LAN detection is unit-tested with fake interfaces.
 
 ### Step 3: simple accounts
 
-- `GET /api/setup` and the setup-code screen go away. The sign-in page has "Create account": a username field, then a screen that shows the generated password once (with copy, and an `autocomplete="new-password"` field so the phone's password manager offers to save it).
-- Generated passwords: 20 characters from a random generator in `server/src/crypto.ts`; stored with the existing password hash.
-- The owner can turn sign-up off in Settings, and can create household members directly (the existing invite route, now also generating the password).
+- `GET /api/setup`, `POST /api/setup` and the setup-code screen go away. On first start (no users in the database) the server creates `admin` / `admin` as owner and logs one line saying so.
+- While the owner's password is still the default:
+  - a banner on every screen: "You're using the default password. Change it before this is reachable outside your network", linking to the change-password form;
+  - a warning line in the logs on every start;
+  - `/api/me` reports `defaultPassword: true` so the UI and the stack smoke script can see it.
+  Nothing is blocked: the owner asked for no friction on a trusted network.
+- The default `admin` password is the only password allowed under 10 characters. Changing it, and every other password, keeps the 10-character minimum.
+- The owner creates household members from Settings with the existing invite route (owner sets the username and password). No public sign-up route.
+- Remove the passkey and TOTP screens and buttons from the web app; their routes stay in the route table with tests. The UI flow test covers password-only login and the password re-check before a loosening approval.
 - Each user gets their own anonymous and personal profile directories, as today. Isolation tests: user B's tab can't see user A's cookies; B's token can't read A's tickets or activity.
-- Throttling on sign-up per client address, as on login.
+- Login throttling per client address stays, and covers `admin` like any other account.
 - Route auth table and its coverage test updated; the setup-code tests are replaced, not deleted silently.
+- `scripts/stack-smoke.ts`, `scripts/testsite-smoke.ts` and `scripts/agent-smoke.ts` stop taking a setup code and log in as `admin` (or `CROSSBAR_USER` / `CROSSBAR_PASSWORD`). START.md, the README and the Harbor package's install notes say to change the default password first.
 
 ### Step 4: diagnostic page
 
@@ -157,5 +163,5 @@ Signal plan F, G and H, unchanged. Step 13 starts with ADRs; the S24 WebSocket a
 
 - All steps merged with `npm run check` green.
 - The diag page shows no Crossbar marker (S01–S04), a stable device across takeover, and an honest llvmpipe renderer.
-- The owner can, from a phone on the LAN: create an account, connect an agent, receive one clear notification, approve in one tap after opening, and take control of a login comfortably.
+- The owner can, from a phone on the LAN: log in as `admin`, change the password, connect an agent, receive one clear notification, approve in one tap after opening, and take control of a login comfortably.
 - Notification counts on the smoke runs are lower than the step 8 baseline, with every consequence still asked.

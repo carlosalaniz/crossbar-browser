@@ -1,6 +1,6 @@
 # 0006: Device emulation
 
-- **Status:** Accepted
+- **Status:** Accepted; the takeover consequence is withdrawn by ADR 0015
 - **Date:** 2026-11-11
 
 ## Decision

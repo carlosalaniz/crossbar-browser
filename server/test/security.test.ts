@@ -549,3 +549,46 @@ describe("live Reddit findings (11 Nov 2026)", () => {
     assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' }).verdict, "hold");
   });
 });
+
+describe("approval cards say who triggered the request", () => {
+  test("a page-initiated request is marked so, offers only 'once', and collapses opaque data; a click names the click", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://forum.example/t/1", { onClick: { e7: { method: "POST", url: "https://forum.example/api/comment", resourceType: "XHR", postData: "text=hello+there" } } });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://forum.example/t/1" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    // The page, by itself, long after any agent action.
+    const blob = JSON.stringify({ lst: ["rec", 10, { "1": { str: "message" }, "2": { str: "consume" }, pad: "x".repeat(500) }] });
+    tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: blob });
+    await sleep(30);
+    const pageTicket = t.services.tickets.listOpen("alice").find((x) => (x.facts as { path?: string }).path === "/api/track")!;
+    const pv = await t.api("GET", `/api/tickets/${pageTicket.id}`, { user: "alice" });
+    assert.deepEqual((pv.json.facts as { trigger: unknown }).trigger, { kind: "page" });
+    assert.deepEqual(pv.json.scopes, ["once"]);
+    assert.equal(((pv.json.facts as { fields: Array<{ opaque: boolean }> }).fields[0]!).opaque, true);
+    // After the agent's click.
+    await c.call("type", { ref: "e6", text: "hello there" });
+    const r = await c.call("click", { ref: "e7" });
+    const cv = await t.api("GET", `/api/tickets/${r.ticket!.id}`, { user: "alice" });
+    assert.equal((cv.json.facts as { trigger: { kind: string; tool: string } }).trigger.kind, "agent");
+    assert.deepEqual(cv.json.scopes, ["task", "once", "always"]);
+  });
+
+  test("Reddit's tracking batches on /api/comment are refused quietly; a real form comment still asks", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "act_as_you" }, "user");
+    pool.pages.set("https://old.reddit.com/r/x/", { content: "posts" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://old.reddit.com/r/x/" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    const events = '{"lst":["rec",10,{"1":{"str":"message"},"2":{"str":"consume"}}]}';
+    assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/api/comment", resourceType: "XHR", postData: events }).rule, "telemetry");
+    assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/api/submit", resourceType: "XHR", postData: events }).rule, "telemetry");
+    const real = tab.simulate({ method: "POST", url: "https://old.reddit.com/api/comment", resourceType: "XHR", postData: "thing_id=t3_abc&text=Thanks!&uh=x" });
+    assert.deepEqual([real.verdict, real.rule], ["hold", "comment"]);
+  });
+});

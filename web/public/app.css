@@ -83,3 +83,6 @@ form { display: flex; flex-direction: column; gap: 10px; }
 .sheet-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .4); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
 .sheet { background: var(--surface); width: 100%; max-width: 640px; border-radius: 16px 16px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
 details summary { cursor: pointer; }
+.why { font-size: 15px; }
+details.field summary { cursor: pointer; }
+details.field code { display: block; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }

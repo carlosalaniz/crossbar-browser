@@ -190,7 +190,8 @@ export function createApp(o: AppOptions) {
       agentSays: t.agentReason ? { text: t.agentReason, verified: false } : null,
       createdAt: t.createdAt,
       expiresAt: t.expiresAt,
-      scopes: t.kind === "approval" ? (always ? ["task", "once", "always"] : ["once"]) : t.kind === "proposal" ? ["apply"] : [],
+      // A request the page sent by itself (no agent click just before) can only be allowed once.
+      scopes: t.kind === "approval" ? (always && (t.facts as { trigger?: { kind: string } }).trigger?.kind !== "page" ? ["task", "once", "always"] : ["once"]) : t.kind === "proposal" ? ["apply"] : [],
       offerAlways: onceCount >= 3,
       hasScreenshot: screenshots.has(t.id),
       takeover: takeovers.has(t.id),

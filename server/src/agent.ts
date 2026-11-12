@@ -35,6 +35,9 @@ export interface Services {
   appOrigin?: string;
 }
 
+/** A held request within this long after the agent's click or typing is shown as caused by it. */
+export const TRIGGER_WINDOW_MS = 3000;
+
 const SENSITIVE_PATH = /\/(message|messages|chat|inbox|settings|billing|account\/(billing|payment)|payments?|wallet|subscriptions?)(\/|$|\?)/i;
 const LONG_SEGMENT = 40;
 
@@ -127,6 +130,8 @@ export class AgentSession {
   private usedBeforeTaint = new Set<string>();
   readonly readIndex = new ReadTextIndex();
   private readonly typed: string[] = [];
+  /** The agent's last action per tab, to tell the person whether a held request followed it. */
+  private readonly lastAction = new Map<string, { tool: "click" | "type"; ref: string; label: string; at: number }>();
   private readonly pending = new Map<string, PendingHold>();
   private readonly newHolds: string[] = [];
   private pageDomain = new Map<Profile, string>();
@@ -315,7 +320,7 @@ export class AgentSession {
     const op = graphqlOperation(r.postData);
     if (matchReadOperation(r.url, r.method, op)) return { verdict: "allow", rule: "read_list" };
     const exit = this.tainted && !this.usedBeforeTaint.has(domain);
-    if (isTelemetry(r.url)) return { verdict: "deny", rule: "telemetry" };
+    if (isTelemetry(r.url, r.postData)) return { verdict: "deny", rule: "telemetry" };
     if (!exit && isCaptchaEndpoint(r.url)) return { verdict: "allow", rule: "captcha_widget" };
     // A tab whose page is behind an open captcha/login ticket goes quiet: its background writes can't be
     // meaningfully approved, and asking for each one would teach the person to rubber-stamp.
@@ -356,6 +361,8 @@ export class AgentSession {
       preview: v.value.slice(0, 300),
       length: v.value.length,
       typedByAgent: this.typed.some((t) => t.length >= 3 && v.value.includes(t)),
+      // Large structured data nobody typed: shown collapsed, as what it is.
+      opaque: v.value.length > 300 && !this.typed.some((t) => t.length >= 3 && v.value.includes(t)) && /^\s*[[{]|^[A-Za-z0-9+/=_-]{300,}$/.test(v.value),
       // Overlap only matters when data leaves for a domain the session hadn't used before the taint.
       overlapsSignedInText: this.tainted && cls === "taint_exit" ? this.readIndex.overlap(v.value) : 0,
     }));
@@ -393,6 +400,7 @@ export class AgentSession {
           profile: tab.profile,
           requestHash,
           sessionId: this.id,
+          trigger: this.triggerFor(tab),
         },
       });
     this.pending.set(ticket.id, { held: h, tab, ticketId: ticket.id, domain, actionClass: cls, requestHash });
@@ -406,6 +414,12 @@ export class AgentSession {
       .then((jpeg) => this.s.tickets.emit("screenshot", { ticketId: ticket.id, jpeg }))
       .catch(() => {});
     if (!existing) this.s.notifier.ticket(ticket);
+  }
+
+  /** Did the agent just act on this tab (click, or type with Enter)? Otherwise the page sent it by itself. */
+  private triggerFor(tab: Tab): { kind: "agent"; tool: string; ref: string; label: string } | { kind: "page" } {
+    const a = this.lastAction.get(tab.id);
+    return a && Date.now() - a.at < TRIGGER_WINDOW_MS ? { kind: "agent", tool: a.tool, ref: a.ref, label: a.label } : { kind: "page" };
   }
 
   private logHeld(tab: Tab, r: GateRequest, outcome: "timeout" | "approved" | "denied", rule: string) {
@@ -721,7 +735,8 @@ export class AgentSession {
     if (!tab) return { state: "error", message: "No page open." };
     const before = await tab.currentUrl();
     try {
-      await tab.click(ref);
+      const el = await tab.click(ref);
+      this.lastAction.set(tab.id, { tool: "click", ref, label: (el && el.text) || ref, at: Date.now() });
     } catch (e) {
       return { state: "error", message: (e as Error).message };
     }
@@ -741,6 +756,7 @@ export class AgentSession {
       return /refused/i.test(msg) ? { state: "denied", reason: msg } : { state: "error", message: msg };
     }
     this.typed.push(text);
+    this.lastAction.set(tab.id, { tool: "type", ref, label: text.slice(0, 80), at: Date.now() });
     if (this.typed.length > 50) this.typed.shift();
     return submit ? this.settle(tab, before) : ok({ typed: text.length });
   }

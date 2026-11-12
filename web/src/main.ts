@@ -265,18 +265,31 @@ function factsTable(t: TicketView) {
     tainted?: boolean;
     taintSource?: string | null;
     profile?: string;
-    fields?: Array<{ where: string; key: string; preview: string; length: number; typedByAgent: boolean; overlapsSignedInText: number }>;
+    trigger?: { kind: "agent"; tool: string; ref: string; label: string } | { kind: "page" };
+    fields?: Array<{ where: string; key: string; preview: string; length: number; typedByAgent: boolean; overlapsSignedInText: number; opaque?: boolean }>;
   };
+  const agent = t.agent ?? "The agent";
+  // Why this is here, in one sentence: did the agent just do something, or did the page send it by itself?
+  const why =
+    f.trigger?.kind === "agent"
+      ? h("p", { class: "why" }, f.trigger.tool === "click" ? `Right after ${agent} clicked “${f.trigger.label}”.` : `Right after ${agent} typed “${f.trigger.label}” and pressed Enter.`)
+      : f.trigger?.kind === "page"
+        ? h("div", { class: "banner" }, h("strong", {}, "The page sent this by itself. "), `${agent} didn't click or type just before. Pages send analytics like this all the time; if you don't recognise it, deny.`)
+        : null;
   const rows: Array<[string, Child]> = [];
   if (f.method) rows.push(["method", f.method]);
   if (f.origin) rows.push(["origin", f.origin]);
   if (f.path) rows.push(["path", f.path]);
   if (f.operation) rows.push(["operation", f.operation]);
-  if (f.actionClass) rows.push(["kind", f.actionClass.replace(/_/g, " ")]);
+  // The kind is a guess from the URL and body keys, so say so.
+  if (f.actionClass) rows.push(["looks like", `${f.actionClass.replace(/_/g, " ")} (guessed from the address)`]);
   if (f.profile) rows.push(["profile", f.profile === "personal" ? "signed in as you" : "anonymous"]);
+  const kb = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} characters`);
+  const typedFields = (f.fields ?? []).filter((x) => x.typedByAgent);
   return h(
     "div",
     {},
+    why,
     h("dl", { class: "facts" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
     f.tainted ? h("p", { class: "warn small" }, `This session read pages while signed in${f.taintSource ? ` (first: ${originOf(f.taintSource)})` : ""}.`) : null,
     f.fields?.length
@@ -284,13 +297,21 @@ function factsTable(t: TicketView) {
           "div",
           { class: "fields" },
           h("h3", {}, "Data it would send"),
+          f.fields.length && !typedFields.length ? h("p", { class: "small muted" }, `None of it is text ${agent} typed.`) : null,
           f.fields.map((x) =>
-            h(
-              "div",
-              { class: `field${x.typedByAgent ? " typed" : ""}${x.overlapsSignedInText >= 24 ? " leak" : ""}` },
-              h("div", { class: "small muted" }, `${x.where} · ${x.key} · ${x.length} chars`, x.typedByAgent ? " · typed by the agent" : "", x.overlapsSignedInText >= 24 ? ` · matches ${x.overlapsSignedInText} chars you read while signed in` : ""),
-              h("code", {}, x.preview),
-            ),
+            x.opaque && x.overlapsSignedInText < 24
+              ? h(
+                  "details",
+                  { class: "field" },
+                  h("summary", { class: "small muted" }, `${x.where} · ${x.key}: ${kb(x.length)} of structured data, not readable text`),
+                  h("code", {}, x.preview),
+                )
+              : h(
+                  "div",
+                  { class: `field${x.typedByAgent ? " typed" : ""}${x.overlapsSignedInText >= 24 ? " leak" : ""}` },
+                  h("div", { class: "small muted" }, `${x.where} · ${x.key} · ${kb(x.length)}`, x.typedByAgent ? ` · typed by ${agent}` : "", x.overlapsSignedInText >= 24 ? ` · matches ${x.overlapsSignedInText} characters you read while signed in` : ""),
+                  h("code", {}, x.preview),
+                ),
           ),
         )
       : null,

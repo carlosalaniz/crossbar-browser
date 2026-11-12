@@ -12,6 +12,8 @@ export interface SiteAdapter {
   consent?: { rejectSelector: string };
   /** Telemetry endpoints (host + path): refused quietly, never a ticket. */
   telemetry?: RegExp[];
+  /** Telemetry recognised by its body on paths that also carry real actions (host + path, and body). */
+  telemetryBodies?: Array<{ path: RegExp; body: RegExp }>;
   /** Paths that always ask on signed-in sessions. */
   sensitivePaths?: RegExp[];
   /** Items for scroll-and-extract. */
@@ -39,7 +41,7 @@ export function adapterFor(url: string): SiteAdapter | undefined {
 }
 
 /** True if this request goes to one of the adapter's telemetry endpoints. */
-export function isTelemetry(url: string): boolean {
+export function isTelemetry(url: string, body?: string): boolean {
   let hp = "";
   try {
     const u = new URL(url);
@@ -47,7 +49,9 @@ export function isTelemetry(url: string): boolean {
   } catch {
     return false;
   }
-  return !!adapterFor(url)?.telemetry?.some((re) => re.test(hp));
+  const a = adapterFor(url);
+  if (a?.telemetry?.some((re) => re.test(hp))) return true;
+  return !!body && !!a?.telemetryBodies?.some((t) => t.path.test(hp) && t.body.test(body.slice(0, 200)));
 }
 
 /** True if this non-GET request is on the adapter's read list. */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Launches Chromium with the flags the Access Model requires.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -41,7 +41,15 @@ function pinnedChromeForTesting(): string | undefined {
   // .cache/browsers/chrome/<platform>-<build>/... installed by scripts/ensure-browser.mjs
   const root = resolve(import.meta.dirname, "..", "..", ".cache", "browsers", "chrome");
   if (!existsSync(root)) return undefined;
-  for (const dir of readdirSync(root)) {
+  // The pinned build first (browser/chrome-build.json), not whichever directory the cache lists first (audit S34).
+  let pin = "";
+  try {
+    pin = JSON.parse(readFileSync(resolve(import.meta.dirname, "..", "chrome-build.json"), "utf8")).chromeForTesting ?? "";
+  } catch {
+    /* no pin file: any cached build */
+  }
+  const dirs = readdirSync(root).sort((a, b) => Number(b.endsWith(`-${pin}`)) - Number(a.endsWith(`-${pin}`)));
+  for (const dir of dirs) {
     const mac = join(root, dir, "chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing");
     const macX64 = join(root, dir, "chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing");
     const linux = join(root, dir, "chrome-linux64", "chrome");

@@ -53,7 +53,9 @@ const launcher = env.CROSSBAR_BROWSER_URL
     });
 // Extra sign-in providers (comma-separated hosts).
 const signInProviders = (env.CROSSBAR_SIGNIN_PROVIDERS ?? "").split(/[\s,]+/).filter(Boolean);
-const pool = new LocalPool(launcher, { extraSignInProviders: signInProviders });
+// Browsers with no open tab stop after a while to save memory; profiles stay on disk (build plan step 10).
+const idleMinutes = Number(env.CROSSBAR_BROWSER_IDLE_MINUTES ?? 10);
+const pool = new LocalPool(launcher, { extraSignInProviders: signInProviders, idleStopMs: idleMinutes > 0 ? idleMinutes * 60_000 : undefined });
 const services = buildServices({
   dataDir,
   pool,

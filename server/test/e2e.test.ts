@@ -137,6 +137,28 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     }
   });
 
+  test("an idle browser stops after its last tab closes and relaunches on the next use (step 10)", async () => {
+    const idle = new LocalPool(localLauncher({ dataDir: dir, hostResolverRules: "MAP *.test 127.0.0.1", headless: true, extraArgs: process.env.CROSSBAR_TEST_NO_SANDBOX === "1" ? ["--no-sandbox"] : [] }), { idleStopMs: 300 });
+    try {
+      const a = await idle.openTab("idle-user", "anon");
+      const b = await idle.openTab("idle-user", "anon");
+      a.setPolicy({ decide: () => "allow" });
+      await a.navigate(site.url("a.test", "/pages/article"));
+      await a.close();
+      await sleep(700);
+      assert.equal(idle.running(), 1, "stopped while a tab was still open");
+      await b.close();
+      for (let i = 0; i < 40 && idle.running() > 0; i++) await sleep(100);
+      assert.equal(idle.running(), 0, "didn't stop when idle");
+      const c = await idle.openTab("idle-user", "anon");
+      c.setPolicy({ decide: () => "allow" });
+      assert.equal((await c.navigate(site.url("a.test", "/pages/article"))).title, "Caddy reverse proxy notes");
+      assert.equal(idle.running(), 1);
+    } finally {
+      await idle.close();
+    }
+  });
+
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/flair") });

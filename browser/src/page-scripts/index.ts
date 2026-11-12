@@ -7,7 +7,7 @@ import type { CdpConnection } from "../cdp.ts";
 import { createIsolatedWorld } from "../isolated-world.ts";
 import type { CollectParams, CollectedItem, ExtractParams, ExtractResult, ScrollState } from "./page.ts";
 
-export type { CollectParams, CollectedItem, ExtractParams, ExtractResult, LinkItem, ScrollState } from "./page.ts";
+export type { CollectParams, CollectedItem, ExtractParams, ExtractResult, LinkItem, ScrollState, ControlMatch, ControlRole } from "./page.ts";
 
 let bundled: Promise<string> | undefined;
 
@@ -28,7 +28,7 @@ export function pageBundle(): Promise<string> {
   return bundled;
 }
 
-type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens" | "findByText" | "checkPoint" | "elementForRef" | "refForHref";
+type Fn = "extract" | "collectItems" | "scrollState" | "applyCosmetics" | "listLinks" | "locateRef" | "refAtPoint" | "domTokens" | "findControls" | "checkPoint" | "elementForRef" | "refForHref";
 
 export class PageScripts {
   private readonly contexts = new Map<string, number>();

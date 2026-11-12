@@ -48,6 +48,11 @@ describe("human-only list", () => {
     for (const h of HUMAN_ONLY) assert.ok(!names.includes(h));
     for (const n of names) assert.ok(!/approve|token|cookie|export|resume|resolver|notif/i.test(n), n);
   });
+  test("find is a read tool any token can use, and not a human-only action", () => {
+    assert.equal(TOOLS.find.minToken, "read");
+    assert.equal(TOOLS.find.class, "read");
+    assert.ok(!(HUMAN_ONLY as readonly string[]).includes("find"));
+  });
   test("no eval, CDP or cookie tool exists", () => {
     for (const n of Object.keys(TOOLS)) assert.ok(!/eval|cdp|cookie|storage|script|exec/i.test(n), n);
   });

@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Finding controls (live: Gmail, 12 Nov 2026): an icon-only gear with a tooltip that reads "Settings" under the
+     header, a menu item hidden in a closed menu, and a button covered by a banner. -->
+<html><head><meta charset="utf-8"><title>Controls</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  header { position: relative; height: 64px; background: #eee; display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 2; }
+  .gear { width: 40px; height: 40px; border: 0; background: #ccc; border-radius: 50%; }
+  /* The tooltip sits right under the header bar, covered by it, like Gmail's. */
+  .tip { position: absolute; top: 40px; left: 60px; z-index: 1; font-size: 12px; }
+  #menu[hidden] { display: none; }
+  .banner { position: fixed; left: 0; right: 0; top: 200px; height: 80px; background: rgba(0,0,0,.85); color: #fff; z-index: 5; }
+  #covered { position: absolute; top: 220px; left: 20px; }
+</style></head>
+<body>
+<header>
+  <button class="gear" aria-label="Settings" onclick="document.getElementById('log').textContent = 'clicked: gear'"><svg width="20" height="20"><circle cx="10" cy="10" r="6"/></svg></button>
+  <button id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="menu" onclick="const m = document.getElementById('menu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden))">More</button>
+  <ul id="menu" role="menu" hidden><li role="menuitem" tabindex="-1" onclick="document.getElementById('log').textContent = 'clicked: archive'">Archive</li></ul>
+</header>
+<div class="tip" role="tooltip">Settings</div>
+<p class="tipish" style="position:absolute;top:44px;left:120px;z-index:1;font-size:12px">Settings</p>
+<button id="covered" onclick="document.getElementById('log').textContent = 'clicked: export'">Export data</button>
+<div class="banner">Cookies! <button onclick="this.parentElement.remove()">Close</button></div>
+<p id="log" style="margin-top:320px">nothing clicked</p>
+</body></html>

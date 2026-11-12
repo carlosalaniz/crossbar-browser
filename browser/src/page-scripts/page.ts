@@ -359,33 +359,183 @@ export function locateRef(p: { ref: string; reveal?: boolean }): { x: number; y:
   return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, inView: inView(r), vw: innerWidth, vh: innerHeight, tag: el.tagName.toLowerCase(), text: textOf(el) };
 }
 
+export type ControlRole = "button" | "link" | "field" | "menuitem" | "tab" | "checkbox" | "other";
+export type ControlState = "visible" | "offscreen" | "covered" | "hidden" | "disabled";
+export interface ControlMatch {
+  ref?: string;
+  role: ControlRole;
+  name: string;
+  region: string;
+  state: ControlState;
+  coveredBy?: { ref: string; text: string };
+  openWith?: { ref: string; name: string };
+}
+
+const squash = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
+
 /**
- * Fallback for clicking what a person sees: the visible element whose text matches, preferring an exact
- * match and the clickable thing around it. Gives it a ref so the normal click (and its checks) can follow.
+ * What a control is called, as assistive technology would say it: aria-label, aria-labelledby, its text, then
+ * title, an image's alt, placeholder, value, an inner icon's label. Icon-only buttons (a gear with
+ * aria-label="Settings") have a name even with no text (live: Gmail, 12 Nov 2026).
  */
-export function findByText(p: { text: string; nth?: number }): { ref: string; text: string } | null {
-  tagRefs();
-  const want = p.text.replace(/\s+/g, " ").trim().toLowerCase();
-  if (!want) return null;
-  const exact: Element[] = [];
-  const partial: Element[] = [];
-  let scanned = 0;
-  for (const el of document.querySelectorAll("body *")) {
-    if (++scanned > MAX_SCAN * 2) break;
-    if (!(el instanceof HTMLElement) || !isVisible(el)) continue;
-    const own = (el.innerText ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-    if (!own || own.length > want.length * 4 + 40) continue;
-    // Innermost element carrying the text: skip if a child carries it too.
-    const childHas = [...el.children].some((c) => ((c as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim().toLowerCase().includes(want));
-    if (childHas) continue;
-    if (own === want || el.getAttribute("aria-label")?.toLowerCase() === want) exact.push(el);
-    else if (own.includes(want)) partial.push(el);
+export function nameOf(el: Element): string {
+  const aria = squash(el.getAttribute("aria-label"));
+  if (aria) return aria.slice(0, 200);
+  const by = el.getAttribute("aria-labelledby");
+  if (by) {
+    const t = squash(by.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" "));
+    if (t) return t.slice(0, 200);
   }
-  const pick = (exact.length ? exact : partial)[p.nth ?? 0];
-  if (!pick) return null;
-  const target = refAncestor(pick) ?? pick;
-  const ref = hasRef(target) ? refOfEl.get(target)! : refFor(target, true);
-  return { ref, text: textOf(target) };
+  const own = squash((el as HTMLElement).innerText ?? el.textContent);
+  if (own) return own.slice(0, 200);
+  const other =
+    squash(el.getAttribute("title")) ||
+    squash(el.querySelector("img[alt]")?.getAttribute("alt")) ||
+    squash((el as HTMLInputElement).placeholder) ||
+    squash(el.tagName === "INPUT" && /^(button|submit|reset)$/.test((el as HTMLInputElement).type) ? (el as HTMLInputElement).value : "") ||
+    squash(el.querySelector("[aria-label]")?.getAttribute("aria-label")) ||
+    squash(el.querySelector("svg title")?.textContent);
+  return other.slice(0, 200);
+}
+
+function roleOf(el: Element): ControlRole {
+  const r = el.getAttribute("role") ?? "";
+  if (r === "button") return "button";
+  if (r === "link") return "link";
+  if (/^menuitem/.test(r) || r === "option") return "menuitem";
+  if (r === "tab") return "tab";
+  if (/^(checkbox|switch|radio)$/.test(r)) return "checkbox";
+  if (/^(textbox|searchbox|combobox)$/.test(r)) return "field";
+  const t = el.tagName.toLowerCase();
+  if (t === "a" && el.hasAttribute("href")) return "link";
+  if (t === "button" || t === "summary") return "button";
+  if (t === "input") {
+    const type = (el as HTMLInputElement).type;
+    if (/^(button|submit|reset|image)$/.test(type)) return "button";
+    if (/^(checkbox|radio)$/.test(type)) return "checkbox";
+    return "field";
+  }
+  if (t === "textarea" || t === "select" || (el as HTMLElement).isContentEditable) return "field";
+  return "other";
+}
+
+const CONTROLS = `${INTERACTIVE}, [role=menuitem], [role=tab], [role=option], summary, [contenteditable=""], [contenteditable=true]`;
+
+function shown(el: Element): boolean {
+  const v = (el as Element & { checkVisibility?: (o: object) => boolean }).checkVisibility;
+  return v ? v.call(el, { checkOpacity: true, checkVisibilityCSS: true }) && isVisible(el) : isVisible(el);
+}
+
+/** For a hidden control: the visible control that reveals it (a closed menu's button, a <details> summary). */
+function opener(el: Element): Element | null {
+  const details = el.closest("details:not([open])");
+  if (details) {
+    const s = details.querySelector(":scope > summary");
+    if (s && shown(s)) return s;
+  }
+  for (let a: Element | null = el, depth = 0; a && depth < 8; a = a.parentElement, depth++) {
+    if (a.id) {
+      const c = document.querySelector(`[aria-controls~="${CSS.escape(a.id)}"], [aria-owns~="${CSS.escape(a.id)}"]`);
+      if (c && shown(c)) return c;
+    }
+    for (let s = a.previousElementSibling, n = 0; s && n < 3; s = s.previousElementSibling, n++) {
+      const c = s.matches("[aria-haspopup], [aria-expanded=false]") ? s : s.querySelector("[aria-haspopup], [aria-expanded=false]");
+      if (c && shown(c)) return c;
+    }
+  }
+  return null;
+}
+
+function score(name: string, want: string): number {
+  const n = name.toLowerCase();
+  if (!n) return 0;
+  if (n === want) return 4;
+  if (n.startsWith(want)) return 3;
+  if (new RegExp(`\\b${want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(n)) return 2.5;
+  if (n.includes(want)) return 2;
+  const words = want.split(" ").filter(Boolean);
+  return words.length > 1 && words.every((w) => n.includes(w)) ? 1 : 0;
+}
+
+/** Whether a visible control would get a click at its centre, and if not, what's on top. */
+function coverOf(el: Element, ref: string): { ref: string; text: string } | null {
+  const r = el.getBoundingClientRect();
+  const c = checkPoint({ ref, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  return c.ok ? null : c.covering ? { ref: c.covering.ref, text: c.covering.text } : null;
+}
+
+/**
+ * Controls on the page whose name matches, best first: what they are, where, and whether a click can reach
+ * them now (visible, offscreen, covered and by what, hidden and what opens them, disabled). Reads only; refs
+ * live in the isolated world (S02). Page text in names is untrusted.
+ */
+export function findControls(p: { query: string; role?: ControlRole | "any"; limit?: number; textFallback?: boolean }): ControlMatch[] {
+  tagRefs();
+  const want = squash(p.query).toLowerCase();
+  if (!want) return [];
+  const limit = Math.min(Math.max(p.limit ?? 8, 1), 20);
+  const scored: Array<{ el: Element; s: number; role: ControlRole; name: string; visible: boolean }> = [];
+  const seen = new Set<Element>();
+  let scanned = 0;
+  for (const el of document.querySelectorAll(CONTROLS)) {
+    if (++scanned > MAX_SCAN * 2) break;
+    if (el.closest("[role=tooltip], [aria-hidden=true]")) continue;
+    const name = nameOf(el);
+    const s = score(name, want);
+    if (!s) continue;
+    const role = roleOf(el);
+    if (p.role && p.role !== "any" && role !== p.role) continue;
+    // The innermost of nested matches (a link wrapping a button with the same name) is enough once.
+    if ([...seen].some((x) => x.contains(el) && nameOf(x) === name)) continue;
+    seen.add(el);
+    scored.push({ el, s: s + 1, role, name, visible: shown(el) });
+  }
+  for (const el of refElements().filter((e) => clickables.has(e))) {
+    if (seen.has(el)) continue;
+    const name = nameOf(el);
+    const s = score(name, want);
+    if (s && (!p.role || p.role === "any" || p.role === "other")) scored.push({ el, s: s + 0.5, role: "other", name, visible: shown(el) });
+  }
+  // Last resort for clicking by text: the innermost visible element carrying the text.
+  if (p.textFallback && !scored.some((x) => x.visible)) {
+    let n = 0;
+    for (const el of document.querySelectorAll("body *")) {
+      if (++n > MAX_SCAN * 2) break;
+      if (!(el instanceof HTMLElement) || !shown(el) || el.closest("[role=tooltip], [aria-hidden=true]")) continue;
+      const own = squash(el.innerText).toLowerCase();
+      if (!own || own.length > want.length * 4 + 40) continue;
+      if ([...el.children].some((c) => squash((c as HTMLElement).innerText).toLowerCase().includes(want))) continue;
+      const s = score(own, want);
+      if (s) scored.push({ el: refAncestor(el) ?? el, s, role: "other", name: squash(el.innerText).slice(0, 200), visible: true });
+    }
+  }
+  const out: Array<ControlMatch & { rank: number }> = [];
+  for (const x of scored) {
+    const disabled = (x.el as HTMLButtonElement).disabled === true || x.el.getAttribute("aria-disabled") === "true";
+    const base = { role: x.role, name: x.name, region: regionOf(x.el) };
+    if (!x.visible) {
+      const o = opener(x.el);
+      out.push({ ...base, state: "hidden", ...(o ? { openWith: { ref: refFor(o), name: nameOf(o) } } : {}), rank: x.s - 3 });
+      continue;
+    }
+    const ref = refFor(x.el, !hasRef(x.el) && x.role === "other");
+    if (disabled) {
+      out.push({ ...base, ref, state: "disabled", rank: x.s - 4 });
+      continue;
+    }
+    const r = x.el.getBoundingClientRect();
+    const inView = r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+    if (!inView) {
+      out.push({ ...base, ref, state: "offscreen", rank: x.s - 0.5 });
+      continue;
+    }
+    const cover = coverOf(x.el, ref);
+    out.push(cover ? { ...base, ref, state: "covered", coveredBy: cover, rank: x.s - 2 } : { ...base, ref, state: "visible", rank: x.s });
+  }
+  return out
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, limit)
+    .map(({ rank: _rank, ...m }) => m);
 }
 
 /** Element under a point, for the check before click (Access Model L4). */
@@ -466,4 +616,4 @@ export function elementForRef(p: { ref: string }): Element | null {
   return elementByRef(p.ref);
 }
 
-(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText, elementForRef, refForHref };
+(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findControls, elementForRef, refForHref };

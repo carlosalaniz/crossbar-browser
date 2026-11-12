@@ -100,6 +100,8 @@ async function dispatch(s: Services, a: AgentSession, name: ToolName, args: Reco
       return a.scroll(args.until, args.selector);
     case "back":
       return a.back();
+    case "find":
+      return a.find(String(args.query), args.role, Number(args.limit ?? 8));
     case "ask_person":
       return a.askPerson(args.need, String(args.reason));
     case "wait_for_ticket": {

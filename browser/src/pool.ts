@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { CdpConnection } from "./cdp.ts";
 import { NetworkGate, type Decision, type GateRequest, type HeldRequest, type Verdict, type Attached } from "./gate.ts";
 import { launchChrome, type LaunchOptions } from "./launch.ts";
-import { PageScripts, type ExtractParams, type ExtractResult } from "./page-scripts/index.ts";
+import { PageScripts, type ControlMatch, type ControlRole, type ExtractParams, type ExtractResult } from "./page-scripts/index.ts";
+export type { ControlMatch, ControlRole } from "./page-scripts/index.ts";
 import { scrollAndExtract, type ScrollOptions, type ScrollResult } from "./page-scripts/scroll.ts";
 import { typeInto, SIGN_IN_PROVIDERS } from "./input-guard.ts";
 
@@ -108,6 +109,8 @@ export interface Tab {
   extract(p?: ExtractParams): Promise<ExtractResult>;
   /** The visible element whose text matches (exact first, then partial), given a ref; null if none. */
   findByText(text: string, nth?: number): Promise<{ ref: string; text: string } | null>;
+  /** Controls whose name matches, best first, with whether a click can reach them (see page.ts findControls). */
+  findControls(query: string, opts?: { role?: ControlRole | "any"; limit?: number; textFallback?: boolean }): Promise<ControlMatch[]>;
   /** Clicks the element; returns what was under the click (for approval cards). */
   click(ref: string): Promise<{ tag: string; text: string } | void>;
   type(ref: string, text: string, submit: boolean): Promise<void>;
@@ -531,8 +534,14 @@ class CdpTab implements Tab {
     return { tag: at.tag, text: at.text };
   }
 
-  findByText(text: string, nth = 0): Promise<{ ref: string; text: string } | null> {
-    return this.b.scripts.call(this.session, "findByText", { text, nth });
+  /** Click by text: the nth control called that which a click can reach (visible or just offscreen). */
+  async findByText(text: string, nth = 0): Promise<{ ref: string; text: string } | null> {
+    const m = (await this.findControls(text, { limit: 20, textFallback: true })).filter((x) => x.ref && (x.state === "visible" || x.state === "offscreen"))[nth];
+    return m ? { ref: m.ref!, text: m.name } : null;
+  }
+
+  findControls(query: string, opts: { role?: ControlRole | "any"; limit?: number; textFallback?: boolean } = {}): Promise<ControlMatch[]> {
+    return this.b.scripts.call(this.session, "findControls", { query, ...opts });
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {

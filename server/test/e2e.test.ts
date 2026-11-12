@@ -216,6 +216,33 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.match(await inner(), /^1280x/);
   });
 
+  test("find and click by name: icon buttons, hidden menu items, covered controls (live: Gmail, 12 Nov 2026)", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: site.url("a.test", "/pages/controls") });
+    type M = { ref?: string; role: string; name: string; state: string; coveredBy?: { ref: string; text: string }; openWith?: { ref: string; name: string } };
+    const find = async (query: string) => ((await c.call("find", { query })).data as { matches: M[] }).matches;
+    const log = async () => /clicked: \w+|nothing clicked/.exec(((await c.call("read")).data as { content: string }).content)![0];
+    // The icon-only gear is found by its label, ahead of the stray "Settings" text under the header.
+    const settings = await find("settings");
+    assert.deepEqual([settings[0]!.role, settings[0]!.state], ["button", "visible"], JSON.stringify(settings));
+    assert.equal((await c.call("click", { text: "Settings" })).state, "ok");
+    assert.equal(await log(), "clicked: gear");
+    // A menu item in a closed menu: hidden, and find says what opens it.
+    const archive = (await find("archive"))[0]!;
+    assert.equal(archive.state, "hidden");
+    assert.equal(archive.openWith?.name, "More");
+    const blocked = await c.call("click", { text: "Archive" });
+    assert.match(String(blocked.message), /opens from "More" \[e\d+\]/);
+    await c.call("click", { ref: archive.openWith!.ref });
+    assert.equal((await find("archive"))[0]!.state, "visible");
+    // A covered button: find names what's on top.
+    const exp = (await find("export"))[0]!;
+    assert.equal(exp.state, "covered");
+    assert.match(exp.coveredBy!.text, /Cookies/);
+    // Bad arguments say what click accepts.
+    assert.match(String((await c.call("click", { target: "Settings" })).message), /Give ref .* or text/);
+  });
+
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/flair") });

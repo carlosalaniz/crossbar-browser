@@ -19,9 +19,10 @@ Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, a
 - **Compatibility:** ad blocking pauses during takeover (S22); service/shared-worker writes judged by their page's tabs, strictest wins (S21).
 - **Diagnostics:** `/pages/diag` on the test site (`http://testsite.test:8090/pages/diag` in the dev stack) shows what a page can see; an e2e test expects no flags after an agent reads, types and clicks.
 - **Measured in the browser image:** WebGL was **missing** entirely; now Mesa llvmpipe (`ANGLE (Mesa, llvmpipe …, OpenGL 4.5)`) via `--ignore-gpu-blocklist` (S31). A covered window under Xvfb reports `hidden`; every tab now gets its own window and `--disable-backgrounding-occluded-windows` keeps them visible (ADR 0017). One Chrome for Testing pin in `browser/chrome-build.json` (S34).
-- **Proposed ADRs 0020–0023** (owner review): scoped WebSockets (S24, needs the owner's decision), permission prompts (S28), stock features (S29), agent popups (S30).
+- **WebSockets stay blocked** (ADR 0020, owner's decision 12 Nov 2026): no allowance and no fake sockets; apps that need them (chat, real-time editors, live trading) stay for a person.
+- **Proposed ADRs 0021–0023** (owner review): permission prompts (S28), stock features (S29), agent popups (S30).
 
-**Next (in order):** owner review of ADRs 0020–0023, then implement the accepted ones; takeover over WebSocket with a per-connection rate limit (ADR 0016); challenge-vendor read allowances from saved fixtures (S19/S20); 5-minute challenge reminder (ADR 0019); container baseline snapshot of `/pages/diag` committed under `docs/`; a cap on concurrent browsers if households grow.
+**Next (in order):** owner review of ADRs 0021–0023, then implement the accepted ones; takeover over WebSocket with a per-connection rate limit (ADR 0016); challenge-vendor read allowances from saved fixtures (S19/S20); 5-minute challenge reminder (ADR 0019); container baseline snapshot of `/pages/diag` committed under `docs/`; a cap on concurrent browsers if households grow.
 
 ## Status (11 Nov 2026, end of first build session)
 

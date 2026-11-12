@@ -55,13 +55,13 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal((w.data as { state: string }).state, "approved");
   });
 
-  test("an agent can't type into a password field", async () => {
+  test("an agent can type into a password field (owner's decision, 11 Nov 2026)", async () => {
     const c = await t.mcpClient(t.token("alice", "act"));
     await c.call("open", { url: site.url("a.test", "/password-form") });
     await c.call("read", { mode: "content+links" });
     // Refs are assigned in order; the password field is the second input.
     const r = await c.call("type", { ref: "e2", text: "hunter2" });
-    assert.equal(r.state, "denied");
+    assert.equal(r.state, "ok");
   });
 
   test("scroll collects a virtualized list through MCP", async () => {
@@ -107,7 +107,7 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal(done.json.verified, true, JSON.stringify(done.json));
   });
 
-  test("typing is refused on configured extra sign-in providers", async () => {
+  test("typing works on configured extra sign-in providers", async () => {
     const extra = new LocalPool(localLauncher({ dataDir: dir, hostResolverRules: "MAP *.test 127.0.0.1", headless: true, extraArgs: process.env.CROSSBAR_TEST_NO_SANDBOX === "1" ? ["--no-sandbox"] : [] }), { extraSignInProviders: ["b.test"] });
     try {
       const tab = await extra.openTab("idp-user", "anon");
@@ -115,7 +115,7 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
       await tab.navigate(site.url("b.test", "/pages/article"));
       const page = await tab.extract({ includeLinks: true });
       const input = page.links!.find((l) => l.kind === "input")!;
-      await assert.rejects(tab.type(input.ref, "hello", false), /sign-in provider/);
+      await tab.type(input.ref, "hello", false);
     } finally {
       await extra.close();
     }

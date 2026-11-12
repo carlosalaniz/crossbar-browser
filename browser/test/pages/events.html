@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Records how input arrives (audit S05-S07): pointer travel before a press, press length, key events per character. -->
+<html><head><meta charset="utf-8"><title>Input events</title></head>
+<body style="margin:0">
+<div style="height:1600px;padding:20px">
+  <p>Top of the page.</p>
+  <input id="name" placeholder="Your name" style="width:300px">
+</div>
+<button id="go" style="width:200px;height:60px">Far button</button>
+<p id="log">no events yet</p>
+<script>
+  const s = { moves: 0, movesBeforeDown: 0, downAt: 0, held: 0, keydowns: 0, inputs: 0, trusted: true, scrolls: 0, points: [] };
+  addEventListener("mousemove", (e) => { s.moves++; s.trusted &&= e.isTrusted; });
+  addEventListener("wheel", () => s.scrolls++, { passive: true });
+  addEventListener("mousedown", (e) => { s.movesBeforeDown = s.moves; s.downAt = performance.now(); s.trusted &&= e.isTrusted; });
+  addEventListener("mouseup", (e) => { s.held = Math.round(performance.now() - s.downAt); s.points.push(Math.round(e.offsetX) + "," + Math.round(e.offsetY)); });
+  addEventListener("keydown", (e) => { s.keydowns++; s.trusted &&= e.isTrusted; });
+  addEventListener("input", () => s.inputs++);
+  document.getElementById("go").addEventListener("click", () => {
+    document.getElementById("log").textContent = "EVENTS " + JSON.stringify({ moves: s.movesBeforeDown, held: s.held, keydowns: s.keydowns, inputs: s.inputs, trusted: s.trusted, scrolls: s.scrolls, value: document.getElementById("name").value });
+  });
+</script>
+</body></html>

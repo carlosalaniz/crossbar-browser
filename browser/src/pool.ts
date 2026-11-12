@@ -149,6 +149,18 @@ export function seedPreferences(userDataDir: string): void {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+interface Located {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  inView: boolean;
+  vw: number;
+  vh: number;
+  tag: string;
+  text: string;
+}
 export const DESKTOP = { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false };
 export const MOBILE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
 
@@ -351,12 +363,64 @@ class CdpTab implements Tab {
     return this.b.scripts.extract(this.session, p);
   }
 
-  async click(ref: string): Promise<{ tag: string; text: string }> {
-    const at = await this.b.scripts.call<{ x: number; y: number; tag: string; text: string } | null>(this.session, "locateRef", { ref });
+  /** Last pointer position, so the next click starts its movement from where the pointer is. */
+  private pointer: { x: number; y: number } | null = null;
+
+  private async locate(ref: string): Promise<Located> {
+    type L = Located | null;
+    let at = await this.b.scripts.call<L>(this.session, "locateRef", { ref });
     if (!at) throw new Error(`No visible element with ref ${ref}. Call read again; refs change when the page changes.`);
-    await sleep(50);
+    // Off screen: scroll toward it with the wheel, like a person, in a few steps (audit S06).
+    for (let i = 0; i < 8 && !at.inView; i++) {
+      const dy = Math.max(-at.vh * 0.8, Math.min(at.vh * 0.8, at.y - at.vh / 2));
+      const dx = at.x < 0 || at.x > at.vw ? Math.max(-at.vw * 0.8, Math.min(at.vw * 0.8, at.x - at.vw / 2)) : 0;
+      if (Math.abs(dy) < 2 && Math.abs(dx) < 2) break;
+      const from = this.pointer ?? { x: at.vw / 2, y: at.vh / 2 };
+      await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: from.x, y: from.y, deltaX: dx, deltaY: dy }, this.session);
+      await sleep(rand(90, 180));
+      const next = await this.b.scripts.call<L>(this.session, "locateRef", { ref });
+      if (!next) throw new Error(`${ref} disappeared while scrolling to it. Call read again.`);
+      const stuck = Math.abs(next.y - at.y) < 1 && Math.abs(next.x - at.x) < 1;
+      at = next;
+      if (stuck) break; // a nested scroller the wheel at this point doesn't move
+    }
+    if (!at.inView) at = (await this.b.scripts.call<L>(this.session, "locateRef", { ref, reveal: true })) ?? at;
+    return at;
+  }
+
+  /** Moves the pointer to (x, y) along a short curved path with easing, as a hand would. */
+  private async moveTo(x: number, y: number): Promise<void> {
+    const from = this.pointer ?? { x: x + rand(-120, 120), y: y + rand(60, 200) };
+    const dist = Math.hypot(x - from.x, y - from.y);
+    const steps = Math.max(3, Math.min(18, Math.round(dist / 40)));
+    // A control point off the straight line bends the path.
+    const cx = (from.x + x) / 2 + rand(-0.2, 0.2) * dist;
+    const cy = (from.y + y) / 2 + rand(-0.2, 0.2) * dist;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const px = (1 - e) * (1 - e) * from.x + 2 * (1 - e) * e * cx + e * e * x;
+      const py = (1 - e) * (1 - e) * from.y + 2 * (1 - e) * e * cy + e * e * y;
+      await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: px, y: py, button: "none", buttons: 0 }, this.session);
+      await sleep(rand(8, 22));
+    }
+    this.pointer = { x, y };
+  }
+
+  async click(ref: string): Promise<{ tag: string; text: string }> {
+    const at = await this.locate(ref);
+    // A point inside the element, not its exact center every time (audit S05).
+    const x = at.x + rand(-0.25, 0.25) * Math.min(at.w, 200);
+    const y = at.y + rand(-0.2, 0.2) * Math.min(at.h, 60);
     // Access Model L4: the element under the click point must be the one the agent chose (no overlay).
-    const check = await this.b.scripts.call<{ ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null }>(this.session, "checkPoint", { ref, x: at.x, y: at.y });
+    const verify = () => this.b.scripts.call<{ ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null }>(this.session, "checkPoint", { ref, x, y });
+    let check = await verify();
+    if (check.ok) {
+      await this.moveTo(x, y);
+      await sleep(rand(40, 120));
+      // Hovering can open menus or move things: check the final point again right before pressing.
+      check = await verify();
+    }
     if (!check.ok) {
       const c = check.covering;
       throw new Error(
@@ -365,10 +429,10 @@ class CdpTab implements Tab {
           : `${ref} isn't on the page any more. Call read again.`,
       );
     }
-    const base = { x: at.x, y: at.y, button: "left" as const, clickCount: 1 };
-    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, this.session);
-    await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base }, this.session);
-    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base }, this.session);
+    const base = { x, y, button: "left" as const, clickCount: 1 };
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 }, this.session);
+    await sleep(rand(45, 110));
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 }, this.session);
     return { tag: at.tag, text: at.text };
   }
 
@@ -381,7 +445,9 @@ class CdpTab implements Tab {
     const objectId = await this.b.scripts.elementHandle(this.session, ref);
     if (!objectId) throw new Error(`No element with ref ${ref}. Read the page again for fresh refs.`);
     try {
-      await typeInto(this.cdp, this.session, { objectId }, text);
+      // Click into the field first, as a person would; if something covers it, focus it directly.
+      await this.click(ref).catch(() => {});
+      await typeInto(this.cdp, this.session, { objectId }, text, { keys: true });
     } finally {
       await this.cdp.send("Runtime.releaseObject", { objectId }, this.session).catch(() => {});
     }

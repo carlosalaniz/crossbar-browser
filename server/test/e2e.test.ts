@@ -64,6 +64,22 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal(r.state, "ok");
   });
 
+  test("agent input looks like a hand: travel before the press, a real hold, a key per character, wheel to reach (audit S05-S07)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/events") });
+    const links = ((await c.call("read", { mode: "content+links" })).data as { links: Array<{ ref: string; kind: string; text: string }> }).links;
+    await c.call("type", { ref: links.find((l) => l.kind === "input")!.ref, text: "Ana Ruiz" });
+    await c.call("click", { ref: links.find((l) => l.text === "Far button")!.ref });
+    const content = ((await c.call("read")).data as { content: string }).content;
+    const ev = JSON.parse(/EVENTS (\{.*\})/.exec(content)![1]!) as { moves: number; held: number; keydowns: number; inputs: number; trusted: boolean; scrolls: number; value: string };
+    assert.equal(ev.value, "Ana Ruiz");
+    assert.equal(ev.keydowns, 8, "one keydown per character");
+    assert.ok(ev.moves >= 3, `pointer travelled ${ev.moves} steps before the press`);
+    assert.ok(ev.held >= 40, `press held ${ev.held} ms`);
+    assert.ok(ev.scrolls >= 1, "the far button was reached with the wheel, not scrollIntoView");
+    assert.equal(ev.trusted, true);
+  });
+
   test("scroll collects a virtualized list through MCP", async () => {
     const c = await t.mcpClient(t.token("alice"));
     await c.call("open", { url: site.url("a.test", "/pages/virtual") });

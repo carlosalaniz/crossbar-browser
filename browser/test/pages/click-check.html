@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Click check</title>
+<style>
+  fancy-option { display: block; width: 240px; cursor: pointer; margin: 8px 0; }
+  .radio { position: relative; display: block; width: 240px; height: 32px; margin: 8px 0; }
+  .radio input { position: absolute; left: 4px; top: 8px; z-index: 0; }
+  .radio label { position: absolute; inset: 0; z-index: 1; padding-left: 28px; line-height: 32px; cursor: pointer; background: rgba(240,240,255,.9); }
+  #banner { position: fixed; left: 0; right: 0; bottom: 0; height: 140px; background: #222; color: #fff; z-index: 10; }
+  #under { position: fixed; bottom: 40px; left: 20px; }
+</style></head>
+<body>
+<p>Result: <span id="result">none</span></p>
+<fancy-option data-v="Alpha">Alpha</fancy-option>
+<div class="radio"><input type="radio" id="r1" name="r" value="beta"><label for="r1">Beta</label></div>
+<button id="under">Save draft</button>
+<div id="banner" role="dialog" aria-label="Cookies">We use cookies. <button id="accept">Accept all</button></div>
+<script>
+  customElements.define('fancy-option', class extends HTMLElement {
+    constructor() { super(); const r = this.attachShadow({ mode: 'open' }); r.innerHTML = '<div style="padding:8px;border:1px solid #888;border-radius:6px"><span class="dot">●</span> <slot></slot></div>'; }
+  });
+  const set = (v) => (document.getElementById('result').textContent = v);
+  document.querySelector('fancy-option').addEventListener('click', () => set('Alpha'));
+  document.getElementById('r1').addEventListener('change', () => set('Beta'));
+  document.getElementById('under').addEventListener('click', () => set('Saved'));
+  document.getElementById('accept').addEventListener('click', () => document.getElementById('banner').remove());
+</script>
+</body></html>

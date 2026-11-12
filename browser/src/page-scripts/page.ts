@@ -355,4 +355,59 @@ export function refAtPoint(p: { x: number; y: number }): string | null {
   return el?.closest(`[${REF_ATTR}]`)?.getAttribute(REF_ATTR) ?? null;
 }
 
-(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, domTokens, findByText };
+/** The element a click at this point would really hit, looking inside open shadow roots. */
+function deepElementFromPoint(x: number, y: number): Element | null {
+  let el = document.elementFromPoint(x, y);
+  for (let i = 0; i < 20 && el?.shadowRoot; i++) {
+    const inner = el.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === el) break;
+    el = inner;
+  }
+  return el;
+}
+
+/** Parent in the composed tree: through slots and out of shadow roots to their host. */
+function composedParent(n: Element): Element | null {
+  if (n.assignedSlot) return n.assignedSlot;
+  if (n.parentElement) return n.parentElement;
+  const root = n.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
+function composedContains(outer: Element, inner: Element): boolean {
+  for (let n: Element | null = inner, i = 0; n && i < 200; n = composedParent(n), i++) if (n === outer) return true;
+  return false;
+}
+
+/**
+ * The check before click (Access Model L4), as a person's click would land. OK when what's under the
+ * point is the element or inside it (through shadow DOM and slots), its label, or a component that wraps it.
+ * Otherwise it names what's on top and gives it a ref, so the agent can deal with it (close a banner).
+ */
+export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null } {
+  const target = document.querySelector(`[${REF_ATTR}="${CSS.escape(p.ref)}"]`);
+  const hit = deepElementFromPoint(p.x, p.y);
+  if (!target || !hit) return { ok: false, covering: null };
+  if (composedContains(target, hit)) return { ok: true };
+  // Clicking a label activates its control (custom radios and checkboxes draw the label on top).
+  const label = hit.closest("label") as HTMLLabelElement | null;
+  if (label && (label.control === target || composedContains(label, target))) return { ok: true };
+  if ((target as HTMLInputElement).labels && [...((target as HTMLInputElement).labels ?? [])].some((l) => composedContains(l, hit))) return { ok: true };
+  // A component that wraps the element at this spot (it draws the control in its shadow DOM).
+  for (let n: Element | null = hit, i = 0; n && i < 200; n = composedParent(n), i++) {
+    if (n.tagName.includes("-") && composedContains(n, target) && n.getBoundingClientRect().width < innerWidth * 0.9) return { ok: true };
+  }
+  // A real overlay: say what it is, with a ref.
+  const cover = (hit.closest("button, a[href], [role=button], [role=dialog], dialog, [aria-modal]") ?? hit) as Element;
+  if (!cover.hasAttribute(REF_ATTR)) {
+    tagRefs();
+    if (!cover.hasAttribute(REF_ATTR)) {
+      cover.setAttribute(REF_ATTR, `e${++refCounter}`);
+      cover.setAttribute(CLICKABLE_ATTR, "");
+    }
+  }
+  const tag = cover.tagName.toLowerCase() + (cover.id ? `#${cover.id}` : "") + (typeof (cover as HTMLElement).className === "string" && (cover as HTMLElement).className.trim() ? `.${(cover as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".")}` : "");
+  return { ok: false, covering: { ref: cover.getAttribute(REF_ATTR)!, tag, text: textOf(cover).slice(0, 80) } };
+}
+
+(globalThis as unknown as { __crossbar: unknown }).__crossbar = { extract, collectItems, scrollState, applyCosmetics, listLinks, locateRef, refAtPoint, checkPoint, domTokens, findByText };

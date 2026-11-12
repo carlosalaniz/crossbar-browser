@@ -80,10 +80,14 @@ function ready() {
 }
 app.server.listen(port, host, ready);
 
+let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {
+    if (stopping) return;
+    stopping = true;
     app.server.close();
-    await pool.close();
+    // Close browsers properly; if that hangs, exiting still kills them (launch.ts).
+    await Promise.race([pool.close(), new Promise((r) => setTimeout(r, 5000))]);
     process.exit(0);
   });
 }

@@ -141,4 +141,30 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.equal((await c.call("click", { text: "No such option" })).state, "error");
     assert.equal((await c.call("click", {})).state, "error");
   });
+
+  test("the click check works like a person's click: shadow DOM, labels on top, and it names real overlays", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: site.url("a.test", "/pages/click-check") });
+    const links = ((await c.call("read", { mode: "content+links" })).data as { links: Array<{ ref: string; kind: string; text: string }> }).links;
+    const result = async () => ((await c.call("read")).data as { content: string }).content.match(/Result: (\w+)/)?.[1];
+    // A web component that draws the option in its shadow DOM.
+    assert.equal((await c.call("click", { text: "Alpha" })).state, "ok");
+    assert.equal(await result(), "Alpha");
+    // A radio whose label is drawn on top of it.
+    const radio = links.find((l) => l.kind === "input" || l.kind === "option" || l.text === "beta")!;
+    const r = await c.call("click", { ref: radio.ref });
+    assert.equal(r.state, "ok", JSON.stringify(r));
+    assert.equal(await result(), "Beta");
+    // A real overlay: refused, and it says what's on top with a ref.
+    const save = links.find((l) => l.text === "Save draft")!;
+    const covered = await c.call("click", { ref: save.ref });
+    assert.equal(covered.state, "error");
+    const m = /on top of e\d+: (.+) \[(e\d+)\]/.exec(String(covered.message));
+    assert.ok(m, String(covered.message));
+    assert.match(m![1]!, /Cookies|dialog|Accept all|We use cookies/);
+    // Deal with it, then the click goes through.
+    assert.equal((await c.call("click", { text: "Accept all" })).state, "ok");
+    assert.equal((await c.call("click", { ref: save.ref })).state, "ok");
+    assert.equal(await result(), "Saved");
+  });
 });

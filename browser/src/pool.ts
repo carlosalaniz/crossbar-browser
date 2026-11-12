@@ -173,6 +173,8 @@ class ManagedBrowser {
   cdp!: CdpConnection;
   closeFn!: () => Promise<void>;
   version = "";
+  /** Called whenever a tab goes away (closed by us or by the page), for idle tracking. */
+  onTabGone?: () => void;
 
   async start(launcher: Launcher, userId: string, profile: Profile): Promise<void> {
     const b = await launcher(userId, profile);
@@ -192,6 +194,7 @@ class ManagedBrowser {
       if (tab) {
         this.tabsBySession.delete(p.sessionId);
         tab.emitClose();
+        this.onTabGone?.();
       }
     });
     // Block third-party cookies.
@@ -693,12 +696,18 @@ class CdpTab implements Tab {
     for (const off of this.offs) off();
     this.b.tabsBySession.delete(this.session);
     await this.cdp.send("Target.closeTarget", { targetId: this.targetId }).catch(() => {});
+    this.b.onTabGone?.();
   }
 }
 
 export interface PoolOptions {
   /** More sign-in providers to refuse agent typing on. Only tightens. */
   extraSignInProviders?: string[];
+  /**
+   * Stop a browser this long after its last tab closed (no agent work, no takeover, no held request: those
+   * all live in tabs). Its profile stays on disk, so the next use relaunches it signed in. Unset: never.
+   */
+  idleStopMs?: number;
 }
 
 export class LocalPool implements BrowserPool {
@@ -726,8 +735,35 @@ export class LocalPool implements BrowserPool {
     return b;
   }
 
+  private readonly idle = new Map<string, NodeJS.Timeout>();
+
   async openTab(userId: string, profile: Profile): Promise<Tab> {
-    return (await this.browser(userId, profile)).newTab(profile);
+    const key = `${userId}:${profile}`;
+    clearTimeout(this.idle.get(key));
+    this.idle.delete(key);
+    const m = await this.browser(userId, profile);
+    m.onTabGone ??= () => this.maybeIdle(key, m);
+    return m.newTab(profile);
+  }
+
+  /** Browsers running now (each is a Chromium process). */
+  running(): number {
+    return this.browsers.size;
+  }
+
+  private maybeIdle(key: string, m: ManagedBrowser): void {
+    const ms = this.opts.idleStopMs;
+    if (!ms || m.tabsBySession.size > 0) return;
+    clearTimeout(this.idle.get(key));
+    const timer = setTimeout(async () => {
+      this.idle.delete(key);
+      if (m.tabsBySession.size > 0 || (await this.browsers.get(key)?.catch(() => null)) !== m) return;
+      this.browsers.delete(key);
+      m.gate.stop();
+      await m.closeFn().catch(() => {});
+    }, ms);
+    timer.unref();
+    this.idle.set(key, timer);
   }
 
   async closeUser(userId: string): Promise<void> {

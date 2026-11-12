@@ -305,6 +305,15 @@ describe("server security rules", () => {
     assert.equal(r.status, 403);
   });
 
+  test("session routes accept every configured origin and nothing else", async () => {
+    await t.close();
+    t = await startTestApp({ extraOrigins: ["http://localhost:8080"] });
+    const own = await t.api("POST", "/api/tokens", { headers: { "x-test-user": "alice", origin: "http://localhost:8080" }, body: { agentName: "x" } });
+    assert.equal(own.status, 200);
+    const other = await t.api("POST", "/api/tokens", { headers: { "x-test-user": "alice", origin: "http://192.168.1.9:8080" }, body: { agentName: "x" } });
+    assert.equal(other.status, 403);
+  });
+
   test("household members can't see each other's tickets", async () => {
     await t.close();
     t = await startTestApp({ users: { alice: {}, bob: {} } });

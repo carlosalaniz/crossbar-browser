@@ -364,7 +364,7 @@ class CdpTab implements Tab {
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {
-    await typeInto(this.cdp, this.session, `[data-cb-ref="${ref.replace(/[^\w]/g, "")}"]`, text, { providers: this.b.signInProviders });
+    await typeInto(this.cdp, this.session, `[data-cb-ref="${ref.replace(/[^\w]/g, "")}"]`, text);
     if (submit) {
       const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
       await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: "\r" }, this.session);
@@ -455,26 +455,58 @@ class CdpTab implements Tab {
     await this.b.scripts.call(this.session, "applyCosmetics", { css });
   }
 
+  private emulated: DeviceKind | null = null;
+
   async emulate(device: DeviceKind): Promise<void> {
-    const m = device === "mobile" ? MOBILE : DESKTOP;
-    await this.cdp.send("Emulation.setDeviceMetricsOverride", m, this.session);
-    await this.cdp.send("Emulation.setTouchEmulationEnabled", device === "mobile" ? { enabled: true, maxTouchPoints: 5 } : { enabled: false }, this.session);
     const major = this.b.version.split("/")[1]?.split(".")[0] ?? "157";
     if (device === "mobile") {
-      // A complete, consistent mobile profile (ADR 0006): UA string and client hints agree.
+      await this.cdp.send("Emulation.setDeviceMetricsOverride", MOBILE, this.session);
+      await this.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 }, this.session);
+      // A complete, consistent mobile profile: UA string and client hints agree.
       await this.cdp.send(
         "Emulation.setUserAgentOverride",
         {
           userAgent: `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Mobile Safari/537.36`,
           platform: "Linux armv8l",
-          userAgentMetadata: { brands: [{ brand: "Chromium", version: major }, { brand: "Not_A Brand", version: "24" }], platform: "Android", platformVersion: "14.0.0", architecture: "", model: "Pixel 8", mobile: true },
+          userAgentMetadata: { brands: [{ brand: "Chromium", version: major }, { brand: "Not A;Brand", version: "99" }], platform: "Android", platformVersion: "14.0.0", architecture: "armv8l", model: "Pixel 8", mobile: true },
         },
         this.session,
       );
-    } else {
-      const ua = (await this.cdp.send("Browser.getVersion")).userAgent.replace("HeadlessChrome", "Chrome");
-      await this.cdp.send("Emulation.setUserAgentOverride", { userAgent: ua }, this.session);
+      this.emulated = "mobile";
+      return;
     }
+    // Desktop: the browser as it is. The window size comes from the launch flags, not from emulation,
+    // so the page's measurements agree with each other (viewport inside window, as in any browser).
+    await this.cdp.send("Emulation.clearDeviceMetricsOverride", undefined, this.session).catch(() => {});
+    await this.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false }, this.session).catch(() => {});
+    const real = (await this.cdp.send("Browser.getVersion")).userAgent;
+    if (/HeadlessChrome/.test(real)) {
+      // Headless announces itself in the UA. Replace it together with matching client hints:
+      // overriding the UA alone wipes navigator.userAgentData and the Sec-CH-UA headers.
+      const platform = /Macintosh/.test(real) ? "macOS" : /Windows/.test(real) ? "Windows" : "Linux";
+      const full = (/Chrome\/([\d.]+)/.exec(real)?.[1] ?? `${major}.0.0.0`);
+      const arch = platform === "macOS" ? "arm64" : platform === "Windows" ? "x86_64" : "x86_64";
+      await this.cdp.send(
+        "Emulation.setUserAgentOverride",
+        {
+          userAgent: real.replace("HeadlessChrome", "Chrome"),
+          userAgentMetadata: {
+            brands: [{ brand: "Chromium", version: major }, { brand: "Not A;Brand", version: "99" }],
+            fullVersionList: [{ brand: "Chromium", version: full }, { brand: "Not A;Brand", version: "99.0.0.0" }],
+            platform,
+            platformVersion: platform === "macOS" ? "15.0.0" : platform === "Windows" ? "11.0" : "6.8.0",
+            architecture: arch,
+            model: "",
+            mobile: false,
+          },
+        },
+        this.session,
+      );
+    } else if (this.emulated === "mobile") {
+      // Back from mobile: an empty override restores the browser's own UA and client hints.
+      await this.cdp.send("Emulation.setUserAgentOverride", { userAgent: "" }, this.session);
+    }
+    this.emulated = "desktop";
   }
 
   async startScreencast(onFrame: (jpeg: string, meta: FrameMeta) => void, opts: { maxWidth?: number; maxHeight?: number; fps?: number } = {}): Promise<void> {

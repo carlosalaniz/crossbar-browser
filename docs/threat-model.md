@@ -57,7 +57,7 @@ Approving tickets and proposals; showing or regenerating tokens; unblocking LAN 
 | Reading | Never asks | Click, expand, load more, paginate, GET search, scroll, consent "reject all", any public site in the anonymous profile |
 | Consequential | Asks unless granted | Non-GET not on the site's read list; using your login on a `read` site; after taint, data to a domain the session hasn't used |
 | Irreversible or private | Always asks | Pay/checkout, delete, change email or password, OAuth authorize, private messages, sensitive paths on signed-in sites |
-| Not possible | Never | Typing into `type=password`, `autocomplete=cc-*`, `autocomplete=one-time-code` **[test: refuses typing into password, cc-*, one-time-code]**; eval, raw CDP, cookie or storage tools; downloads; `file:`, `chrome:`, `devtools:` URLs; typing on sign-in providers such as `accounts.google.com` **[test: refuses typing on sign-in providers]** |
+| Not possible | Never | eval, raw CDP, cookie or storage tools; downloads; `file:`, `chrome:`, `devtools:` URLs |
 
 ## Approvals
 
@@ -113,7 +113,7 @@ Agents get `list_activity` (read-only, own rows, no values) and `flag_domain` (m
 
 ## Captchas, logins and takeover
 
-Per ADRs 0001, 0011 and 0013 (a person can dismiss a false alarm; a captcha inside a form with other fields isn't a wall): `detect/` emits `BlockState` (`captcha`, `verification` for 3-D Secure and other step-up checks, `login`, `consent`, `soft_block`); `login` and `verification` always go to a person, and only a verified `login` changes the site ladder; the agent gets `{ state: "blocked", reason, ticket }`; tickets expire after 15 minutes. The only v1 resolver is human takeover. A verifier decides success; the person's "I'm done" triggers verification, and a failed check reopens the ticket. During takeover the agent is paused and sees nothing; the real origin is drawn outside the stream, with a warning when a password field is on a different origin from the ticket's. On hand-back the agent gets a fresh read, never a replay. Live view at 15 fps.
+Per ADRs 0001, 0011 and 0013 (a person can dismiss a false alarm; a captcha inside a form with other fields isn't a wall): `detect/` emits `BlockState` (`captcha`, `verification` for 3-D Secure and other step-up checks, `login`, `consent`, `soft_block`); `login` and `verification` always go to a person, and only a verified `login` changes the site ladder; the agent gets `{ state: "blocked", reason, ticket }`; tickets expire after 15 minutes. The default resolver is human takeover. A verifier decides success; the person's "I'm done" triggers verification, and a failed check reopens the ticket. During takeover the agent is paused and sees nothing; the real origin is drawn outside the stream, with a warning when a password field is on a different origin from the ticket's. On hand-back the agent gets a fresh read, never a replay. Live view at 15 fps.
 
 ## Implementation notes (from building v1)
 

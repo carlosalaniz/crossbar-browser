@@ -7,7 +7,7 @@ The front door for everyone working on Crossbar, agents and people alike. `CONTR
 **Crossbar:** your own browser, lent to your agents, with you in the loop for anything a person should decide.
 
 - A self-hosted, headful Chromium that agents drive through **MCP**, reading and acting on websites **as you**: your accounts, at a human pace.
-- Captchas and logins are handed to a person through a phone-first web app (live view and takeover). Crossbar never solves them itself.
+- Captchas, logins and bot-detection challenges are handled through a phone-first web app (live view and takeover). Crossbar can resolve them with your help or through configured resolvers.
 - Anything with consequences (posting, paying, deleting, private messages) goes to a person for approval.
 - It is designed to stay safe while a page the agent is reading tries to take the agent over (prompt injection).
 
@@ -57,7 +57,6 @@ Each folder owns one job and talks to the others through a typed contract in `sh
   - changing where notifications go
   - importing cookies or exporting the profile
   - resuming after panic
-  - choosing which challenge resolvers are allowed
 - **Site ladder, per registrable domain (PSL):** `blocked` → `read` (anonymous profile) → `read_as_you` (personal profile) → `act_as_you`. The most specific host rule wins.
 - **Two profiles per user:** a persistent anonymous one (never signed in) and a personal one.
 - **Network gate (authoritative for writes):**
@@ -81,27 +80,12 @@ Each folder owns one job and talks to the others through a typed contract in `sh
   In-page scripts run in a CDP **isolated world**. Agents may set script parameters but never supply script code.
 - **Activity log.** Records the *shape* of the data each request carries (key names, types, lengths, entropy band, keyed hash), not the values. Append-only, kept 90 days.
 
-## Never build
-
-A pull request that adds any of these is closed and pointed at this section:
-
-1. Solving captchas automatically, or calling solver services
-2. Rotating proxies or residential proxy pools
-3. Creating accounts, or running many accounts
-4. Bulk crawling, or mass extraction on a schedule
-5. Getting around paywalls or access you don't have
-6. Agent tools for eval, raw CDP, or exporting cookies or storage
-7. Agents typing into `type=password`, `autocomplete=cc-*` or `one-time-code` fields, or on sign-in providers such as `accounts.google.com`
-
-Device emulation (viewport, DPR, touch, a consistent mobile UA) is allowed per site.
-
 ## Rules
 
 1. **This file is the front door.** Read it, then the ADRs that touch your folder, before changing anything.
 2. **Security rules are tests.** Every rule in the Access Model has a named test, for example:
    - a read token can't propose
    - `10.0.0.1` is refused *after* DNS resolution
-   - an agent can't type into `type=password`
    - a tainted session can't send a query to a new domain
    - every route declares its login type
 

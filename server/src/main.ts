@@ -46,7 +46,7 @@ const launcher = env.CROSSBAR_BROWSER_URL
       hostResolverRules: env.CROSSBAR_HOST_RESOLVER_RULES,
       extraArgs: env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : [],
     });
-// Extra sign-in providers (comma-separated hosts): blocked for agents by default and typing refused there.
+// Extra sign-in providers (comma-separated hosts).
 const signInProviders = (env.CROSSBAR_SIGNIN_PROVIDERS ?? "").split(/[\s,]+/).filter(Boolean);
 const pool = new LocalPool(launcher, { extraSignInProviders: signInProviders });
 const services = buildServices({

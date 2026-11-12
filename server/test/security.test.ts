@@ -651,6 +651,6 @@ describe("sensitive categories are account permissions (ADR 0014)", () => {
     const list = (await t.api("GET", "/api/settings/categories", { user: "alice" })).json as unknown as Array<{ id: string; enabled: boolean }>;
     assert.deepEqual(list.map((x) => x.id), ["banking", "mail", "passwords", "cloud", "signin", "government"]);
     const init = (await (await fetch(`${t.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${t.token("alice")}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) })).json()) as { result: { instructions: string } };
-    assert.match(init.result.instructions, /never ask the user for passwords/);
+    assert.match(init.result.instructions, /ask the user to log in/);
   });
 });

@@ -16,4 +16,4 @@
 ## Consequences
 
 - Works on virtualized lists, which a single end-of-scroll extraction would miss.
-- Caps keep this from becoming bulk extraction (see the "never" list).
+- Caps keep this from becoming bulk extraction.

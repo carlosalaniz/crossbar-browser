@@ -8,6 +8,7 @@ export default tseslint.config(
     rules: {
       // Rule 10: nothing outside browser/ calls CDP.
       "no-restricted-imports": ["error", { patterns: [{ group: ["**/browser/src/cdp*"], message: "Only browser/ talks CDP. Use the pool/controller interface." }] }],
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
   },
   { files: ["browser/**"], rules: { "no-restricted-imports": "off" } },

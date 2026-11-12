@@ -4,7 +4,7 @@
 
 Crossbar is a self-hosted Chromium that AI agents drive through [MCP](https://modelcontextprotocol.io). Agents read and act on websites as you: your accounts, at a human pace.
 
-- **Captchas and logins go to you.** Crossbar detects them and hands them to you through a phone-first web app with a live view and takeover. It never solves them itself.
+- **Captchas and logins go to you.** Crossbar detects them and hands them to you through a phone-first web app with a live view and takeover. It can resolve them with your help or through configured resolvers.
 - **Consequences ask first.** Posting, paying, deleting and private messages are held in the browser until you approve them on your phone. Approval is decided from the requests that actually leave the browser, not from button labels.
 - **Built for prompt injection.** A page the agent reads can't promote the agent, can't approve anything, and can't make the browser send what it read while signed in to a new site without asking you.
 

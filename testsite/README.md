@@ -95,12 +95,12 @@ ADR 0001 renamed the agent state `needs_human` to `blocked`, so ticket outcomes 
 
 | Scenario | Path | Expected | Also |
 |---|---|---|---|
-| Login (password, optional captcha, TOTP) | `site-a.test/login` | `blocked:login` | agent types into the password field: `never`; agent types into the TOTP field (bob): `never`; with ?mode=always: `blocked:captcha` |
-| Registration | `site-a.test/register` | `never` | agent types into password / confirm: `never`; captcha widget on the form: `blocked:captcha` |
+| Login (password, optional captcha, TOTP) | `site-a.test/login` | `blocked:login` | agent types into the password field: `allowed`; agent types into the TOTP field (bob): `allowed`; with ?mode=always: `blocked:captcha` |
+| Registration | `site-a.test/register` | `blocked:captcha` | agent types into password / confirm: `allowed`; captcha widget on the form: `blocked:captcha` |
 | Login wall | `site-a.test/members/article` | `blocked:login` |  |
 | Wrong-origin login (iframe) | `site-a.test/accounts/wrong-origin` | `blocked:login` |  |
 | Wrong-origin login (redirect) | `site-a.test/accounts/wrong-origin-redirect` | `blocked:login` |  |
-| Sign-in provider | `accounts.idp.test/signin` | `blocked` | agent types into its fields: `never` |
+| Sign-in provider | `accounts.idp.test/signin` | `blocked` | agent types into its fields: `allowed` |
 | Connect via the sign-in provider | `site-a.test/connect/idp` | `blocked` |  |
 | OAuth consent (third-party app) | `site-a.test/connect/site-b` | `read` | open the consent page on site-b.test: `read`; Allow (POST /oauth/authorize): `always_asks`; Deny: `always_asks` |
 

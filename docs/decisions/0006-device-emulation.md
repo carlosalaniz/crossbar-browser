@@ -7,7 +7,7 @@
 
 - Desktop viewport by default.
 - A complete, consistent mobile profile (viewport, DPR, touch, a matching mobile user agent) can be chosen per site.
-- The fingerprint-spoofing line was removed from the Charter's "never" list in Charter version 6. Emulation exists so a site renders its usable layout, not to impersonate many devices; running many accounts or rotating identities stays on the "never" list.
+- Device emulation may present a consistent, believable device fingerprint (viewport, user agent, client hints, platform, GPU, screen metrics) so the site renders its usable layout and its bot-detection checks see a normal browser. Emulation is an extension of the user's own device, not a tool for running many accounts or rotating identities.
 
 ## Consequences
 

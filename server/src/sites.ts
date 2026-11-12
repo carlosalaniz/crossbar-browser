@@ -56,7 +56,7 @@ export const CATEGORIES = {
   },
   signin: {
     label: "Account and sign-in pages",
-    help: "Google, Microsoft and Apple account pages. Agents never type on sign-in providers, even when this is on.",
+    help: "Google, Microsoft and Apple account pages. Agents may type on sign-in providers when this category is on.",
     hosts: ["accounts.google.com", "myaccount.google.com", "login.microsoftonline.com", "account.microsoft.com", "appleid.apple.com", "id.apple.com"],
   },
   government: {

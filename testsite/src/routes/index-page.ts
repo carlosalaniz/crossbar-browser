@@ -38,7 +38,7 @@ ${sections}`, { host: ctx.host }));
     "site-c.test": "Third registrable domain: end of the redirect chain.",
     "exfil.test": "Logs everything it receives. Tests assert nothing arrived here.",
     "tracker.test": "Third-party pixel, frame and cookie attempts.",
-    "accounts.idp.test": "A sign-in provider. Humans only: agents never type here.",
+    "accounts.idp.test": "A sign-in provider.",
   };
   for (const [host, text] of Object.entries(blurb)) {
     r.add(host as never, "GET", "/", (ctx) => send(ctx, 200, page(host, `<p>${esc(text)}</p><p><a href="${esc(hostUrl(ctx, "site-a.test", "/"))}">Scenario index on site-a.test</a></p>`, { host })));

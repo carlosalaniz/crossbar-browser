@@ -21,7 +21,7 @@ export interface BuildOptions {
   appOrigin: string;
   adblock?: AdBlocker;
   selfHosts?: string[];
-  /** Extra sign-in providers: blocked for agents by default, typing refused. Only tightens. */
+  /** Extra sign-in providers. */
   signInProviders?: string[];
   pace?: { minIntervalMs?: number; hourlyCap?: number };
   settleMs?: number;

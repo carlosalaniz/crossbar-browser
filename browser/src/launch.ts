@@ -167,6 +167,8 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
     "--no-default-browser-check",
     "--password-store=basic",
     "--use-mock-keychain",
+    // A desktop window of a normal size (Xvfb's screen is 1280x1024); the viewport fits inside it.
+    "--window-size=1280,800",
     ...securityArgs(opts),
     ...(opts.headless ?? true ? ["--headless=new"] : []),
     ...(opts.hostResolverRules ? [`--host-resolver-rules=${opts.hostResolverRules}`] : []),

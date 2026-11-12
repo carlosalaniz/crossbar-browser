@@ -392,6 +392,21 @@ describe("challenges (ADR 0001)", () => {
     await t.close();
   });
 
+  test("ad blocking pauses while a person has control (audit S22)", async () => {
+    const adblock = { shouldBlock: (r: { url: string }) => r.url.includes("/ads/"), cosmeticCss: () => "" } as never;
+    const t = await startTestApp({ adblock });
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });
+    const c = await t.mcpClient(t.token("alice", "read"));
+    const r = await c.call("open", { url: "https://www.reddit.com/login/" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    assert.equal(tab.simulate({ method: "GET", url: "https://cdn.example/ads/sensor.js", resourceType: "Script" }).rule, "blocked_ad");
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/claim`, { user: "alice" });
+    const personal = pool.tabs.find((x) => x.profile === "personal")!;
+    assert.equal(personal.simulate({ method: "GET", url: "https://cdn.example/ads/sensor.js", resourceType: "Script" }).rule, "human_takeover");
+    await t.close();
+  });
+
   test("challenges can't be approved, only resolved through takeover", async () => {
     const t = await startTestApp();
     const tk = t.services.tickets.create({ userId: "alice", tokenId: null, agentName: "a", kind: "challenge", facts: {} });

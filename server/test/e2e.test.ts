@@ -159,6 +159,20 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     }
   });
 
+  test("a service worker's POST follows its page's policy: allowed if the tab allows, refused if it holds (audit S21)", async () => {
+    const run = async (user: string, verdict: "allow" | "hold") => {
+      const tab = await pool.openTab(user, "anon");
+      tab.setPolicy({ decide: (r) => (r.method === "GET" || r.resourceType === "Document" ? "allow" : verdict) });
+      const before = site.hits.filter((h) => h.case === "service-worker").length;
+      await tab.navigate(site.url("localhost", "/pages/sw-auto"));
+      for (let i = 0; i < 30 && site.hits.filter((h) => h.case === "service-worker").length === before; i++) await sleep(100);
+      await tab.close();
+      return site.hits.filter((h) => h.case === "service-worker").length - before;
+    };
+    assert.equal(await run("sw-allow", "allow"), 1, "the worker's POST should pass when its page's policy allows it");
+    assert.equal(await run("sw-hold", "hold"), 0, "a held write from a worker must not go out");
+  });
+
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/flair") });

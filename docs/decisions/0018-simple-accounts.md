@@ -15,7 +15,7 @@ Crossbar runs behind the owner's own access control (Harbor or a reverse proxy) 
 - People sign in with username and password; agents use MCP tokens. Passkey and TOTP screens are removed from the web app; their server routes stay so they can return.
 - While the owner's password is the default, every screen shows a banner to change it and every start logs a warning. Nothing is blocked.
 - `admin` is the only password allowed under 10 characters.
-- Approvals that loosen access re-check the password when no second factor is enrolled.
+- No extra password check on approvals: without a second factor enrolled, approvals and settings take one tap (owner: "make it easy").
 
 ## Consequences
 

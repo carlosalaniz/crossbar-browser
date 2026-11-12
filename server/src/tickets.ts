@@ -161,6 +161,13 @@ export class Tickets extends EventEmitter {
     return t;
   }
 
+  /** The held request this ticket was about is gone (its hold ran out): nothing is left to decide. */
+  expireNow(id: string): Ticket | null {
+    const t = this.get(id);
+    if (!t || FINAL.has(t.state)) return t;
+    return this.transition(id, ["open"], "expired", { resolution: { reason: "the request's hold ran out" } });
+  }
+
   sweep(at = Date.now()): void {
     const expired = this.db.prepare("SELECT * FROM tickets WHERE state IN ('open','claimed') AND expires_at < ?").all(new Date(at).toISOString()) as unknown as Row[];
     for (const r of expired) {

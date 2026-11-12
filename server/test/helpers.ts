@@ -34,7 +34,7 @@ export class FakeTab implements Tab {
   device: DeviceKind = "desktop";
   typed: Array<{ ref: string; text: string }> = [];
   inputs: InputEvent[] = [];
-  readonly results: Array<{ req: GateRequest; verdict: Verdict; rule?: string; held?: HeldRequest; outcome?: string }> = [];
+  readonly results: Array<{ req: GateRequest; verdict: Verdict; rule?: string; held?: HeldRequest; outcome?: string; timeout?: () => void }> = [];
   readonly profile: Profile;
   private readonly pages: Map<string, FakePage>;
   constructor(profile: Profile, pages: Map<string, FakePage>) {
@@ -83,6 +83,11 @@ export class FakeTab implements Tab {
         },
       };
       entry.held = h;
+      // The gate's 20 s hold running out.
+      entry.timeout = () => {
+        entry.outcome = "timeout";
+        settle("timeout");
+      };
       this.policy!.onHeld?.(h);
     }
     return entry;

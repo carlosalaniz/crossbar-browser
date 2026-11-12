@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, test, expect } from "vitest";
-import { parseRoute, headline, toPage, timeLeft, SCOPE_LABEL, type TicketView } from "../src/logic.ts";
+import { parseRoute, headline, toPage, SCOPE_LABEL, sortInbox, deadline, kindLabel, type TicketView } from "../src/logic.ts";
 
 const ticket = (over: Partial<TicketView>): TicketView => ({ id: "t1", kind: "approval", state: "open", agent: "claude-desktop", facts: {}, agentSays: null, createdAt: "", expiresAt: "", scopes: [], offerAlways: false, hasScreenshot: false, takeover: false, ...over });
 
@@ -21,7 +21,33 @@ describe("approval wording comes from server facts only", () => {
     expect(headline(ticket({ kind: "proposal", facts: { pattern: "x.com" }, agentSays: { text: "APPROVE NOW", verified: false } }))).not.toMatch(/APPROVE/);
   });
   test("a page-initiated request is not attributed to the agent", () => {
-    expect(headline(ticket({ facts: { actionClass: "comment", domain: "reddit.com", trigger: { kind: "page" } } }))).toBe("A page on reddit.com wants to send data by itself");
+    expect(headline(ticket({ facts: { actionClass: "comment", domain: "reddit.com", trigger: { kind: "page" } } }))).toBe("reddit.com sent a request on its own");
+  });
+});
+
+describe("inbox", () => {
+  const now = Date.parse("2026-11-12T10:00:00Z");
+  const at = (min: number) => new Date(now + min * 60_000).toISOString();
+  const page = (id: string, domain: string, created: number) => ticket({ id, facts: { domain, trigger: { kind: "page" } }, createdAt: at(created), expiresAt: at(created + 15) });
+  test("page-made requests leave Needs you and group by site, busiest first", () => {
+    const agentAsk = ticket({ id: "a", facts: { actionClass: "comment", domain: "reddit.com", trigger: { kind: "agent" } }, expiresAt: at(9) });
+    const wall = ticket({ id: "w", kind: "challenge", facts: { kind: "login", domain: "x.com" }, expiresAt: at(14) });
+    const ib = sortInbox([page("p1", "glance.net", 1), agentAsk, page("p2", "schwab.com", 2), wall, page("p3", "schwab.com", 3)]);
+    expect(ib.needsYou.map((t) => t.id)).toEqual(["w", "a"]);
+    expect(ib.background.map((g) => [g.domain, g.tickets.map((t) => t.id)])).toEqual([["schwab.com", ["p3", "p2"]], ["glance.net", ["p1"]]]);
+  });
+  test("soonest deadline first among approvals", () => {
+    const ib = sortInbox([ticket({ id: "late", expiresAt: at(12) }), ticket({ id: "soon", expiresAt: at(3) })]);
+    expect(ib.needsYou.map((t) => t.id)).toEqual(["soon", "late"]);
+  });
+  test("deadlines say what happens, not just a countdown", () => {
+    expect(deadline(ticket({ expiresAt: at(11) }), now)).toBe("claude-desktop is waiting · denied in 11 min if you don't answer");
+    expect(deadline(ticket({ kind: "challenge", expiresAt: at(0.5) }), now)).toBe("claude-desktop is paused · gives up in under a minute");
+    expect(deadline(ticket({ kind: "proposal", expiresAt: at(-1) }), now)).toBe("Dropped, nothing changed");
+  });
+  test("kind labels", () => {
+    expect(kindLabel(ticket({ kind: "challenge", facts: { kind: "login" } }))).toBe("Log in");
+    expect(kindLabel(ticket({}))).toBe("Approve");
   });
   test("always label names the site and class", () => {
     expect(SCOPE_LABEL.always!(ticket({ facts: { actionClass: "comment", domain: "reddit.com" } }))).toBe("Always comment on reddit.com");
@@ -31,10 +57,6 @@ describe("approval wording comes from server facts only", () => {
 describe("takeover", () => {
   test("taps on the scaled image map to CSS pixels", () => {
     expect(toPage({ x: 100, y: 200 }, { width: 195, height: 422 }, { width: 390, height: 844 })).toEqual({ x: 200, y: 400 });
-  });
-  test("time left", () => {
-    expect(timeLeft(new Date(Date.now() + 125_000).toISOString())).toBe("2 min left");
-    expect(timeLeft(new Date(Date.now() - 1).toISOString())).toBe("expired");
   });
 });
 

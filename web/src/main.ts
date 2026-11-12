@@ -2,7 +2,7 @@
 // Crossbar web app: phone-first. Approvals, takeover, live view, connect, sites, activity, settings.
 // Talks to /api only (Charter). Page text and agent reasons are shown as quotes, marked unverified.
 import { startAuthentication } from "@simplewebauthn/browser";
-import { parseRoute, headline, SCOPE_LABEL, timeLeft, levelLabel, originOf, type Route, type TicketView } from "./logic.ts";
+import { parseRoute, headline, SCOPE_LABEL, levelLabel, originOf, sortInbox, deadline, kindLabel, isBackground, type Route, type TicketView } from "./logic.ts";
 import { takeoverWindow } from "./takeover.ts";
 
 // ---------- tiny DOM helper ----------
@@ -183,13 +183,55 @@ async function loginScreen() {
   user.focus();
 }
 
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+/** Something an agent is waiting on: what kind, where, what it wants, and what happens if you don't answer. */
 function ticketCard(t: TicketView) {
-  const icon = t.kind === "challenge" ? "⚑" : t.kind === "proposal" ? "⇡" : "✋";
-  return h("a", { href: `#/tickets/${t.id}`, class: `card ticket ${t.kind}` }, h("span", { class: "icon", "aria-hidden": "true" }, icon), h("div", {}, h("strong", {}, headline(t)), h("div", { class: "muted small" }, `${String(t.facts.domain ?? t.facts.pattern ?? "")} · ${timeLeft(t.expiresAt)}`)));
+  const where = String(t.facts.domain ?? t.facts.pattern ?? "");
+  return h(
+    "a",
+    { href: `#/tickets/${t.id}`, class: `card ticket ${t.kind}` },
+    h("div", { class: "kind small" }, kindLabel(t), where ? h("span", { class: "muted" }, ` · ${where}`) : null),
+    h("strong", {}, headline(t)),
+    h("div", { class: "muted small", title: `Until ${clock(t.expiresAt)}` }, deadline(t)),
+  );
+}
+
+/** Requests a site's own page sent while the agent wasn't doing anything there: one card per site. */
+function backgroundGroup(g: { domain: string; tickets: TicketView[] }, refresh: () => void) {
+  const n = g.tickets.length;
+  const err = h("p", { class: "error small" });
+  const deny = h("button", {
+    class: "btn small",
+    onclick: async () => {
+      (deny as HTMLButtonElement).disabled = true;
+      try {
+        await Promise.all(g.tickets.map((t) => api("POST", `/api/tickets/${t.id}/deny`)));
+        refresh();
+      } catch (e) {
+        err.textContent = (e as Error).message;
+        (deny as HTMLButtonElement).disabled = false;
+      }
+    },
+  }, n === 1 ? "Deny" : "Deny all");
+  return h(
+    "div",
+    { class: "card bg-group" },
+    h("div", { class: "row between" }, h("div", {}, h("strong", {}, g.domain), h("div", { class: "muted small" }, `${n} request${n === 1 ? "" : "s"} · last at ${clock(g.tickets[0]!.createdAt)}`)), deny),
+    h(
+      "details",
+      {},
+      h("summary", { class: "small muted" }, "Show them"),
+      h("ul", { class: "bg-list" }, g.tickets.map((t) => h("li", {}, h("a", { href: `#/tickets/${t.id}`, class: "mono small" }, `${String(t.facts.method ?? "")} ${String(t.facts.path ?? "")}`), h("span", { class: "muted small" }, ` · ${clock(t.createdAt)}`)))),
+    ),
+    err,
+  );
 }
 
 async function homeScreen() {
   const [tickets, notif] = await Promise.all([api<TicketView[]>("GET", "/api/tickets"), api<{ ntfyUrl: string | null; panic: unknown }>("GET", "/api/settings/notifications")]);
+  const { needsYou, background } = sortInbox(tickets);
+  const bgCount = background.reduce((n, g) => n + g.tickets.length, 0);
   render(
     shell(
       "Inbox",
@@ -197,7 +239,19 @@ async function homeScreen() {
         ? h("div", { class: "banner danger" }, h("strong", {}, "Panic is on."), " Every token is suspended. ", h("button", { class: "btn small", onclick: async () => (await withFreshFactor(() => api("POST", "/api/resume")), void homeScreen()) }, "Resume"))
         : null,
       !notif.ntfyUrl ? h("div", { class: "banner" }, "Notifications are off. ", h("a", { href: "#/settings" }, "Set up ntfy"), " so you hear about approvals.") : null,
-      tickets.length === 0 ? h("div", { class: "empty" }, h("p", {}, "Nothing needs you."), h("p", { class: "muted" }, "Approvals, logins and captchas show up here.")) : tickets.map(ticketCard),
+      h("h2", { class: "section" }, needsYou.length ? `${needsYou.length} thing${needsYou.length === 1 ? "" : "s"} need${needsYou.length === 1 ? "s" : ""} you` : "Nothing needs you"),
+      needsYou.length
+        ? h("div", { class: "stack" }, needsYou.map(ticketCard))
+        : h("p", { class: "muted" }, "When an agent wants to post, pay, log in or get past a check, it waits here for you."),
+      bgCount
+        ? h(
+            "section",
+            { class: "background" },
+            h("h3", { class: "section" }, "Sent by sites on their own"),
+            h("p", { class: "muted small" }, "These pages sent requests while your agent wasn't doing anything there, usually analytics or refreshing what's on screen. Crossbar stops requests it can't tell are harmless. Denying is safe; at worst a page doesn't update something. Nobody is waiting on these."),
+            h("div", { class: "stack" }, background.map((g) => backgroundGroup(g, () => void homeScreen()))),
+          )
+        : null,
       h("div", { class: "spacer" }),
       h("button", {
         class: "btn danger",
@@ -236,9 +290,7 @@ function factsTable(t: TicketView) {
   const why =
     f.trigger?.kind === "agent"
       ? h("p", { class: "why" }, f.trigger.tool === "click" ? `Right after ${agent} clicked “${f.trigger.label}”.` : `Right after ${agent} typed “${f.trigger.label}” and pressed Enter.`)
-      : f.trigger?.kind === "page"
-        ? h("div", { class: "banner" }, h("strong", {}, "The page sent this by itself. "), `${agent} didn't click or type just before. Pages send analytics like this all the time; if you don't recognise it, deny.`)
-        : null;
+      : null;
   const rows: Array<[string, Child]> = [];
   if (f.method) rows.push(["method", f.method]);
   if (f.origin) rows.push(["origin", f.origin]);
@@ -249,11 +301,23 @@ function factsTable(t: TicketView) {
   if (f.profile) rows.push(["profile", f.profile === "personal" ? "signed in as you" : "anonymous"]);
   const kb = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} characters`);
   const typedFields = (f.fields ?? []).filter((x) => x.typedByAgent);
+  const table = h("dl", { class: "facts" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
+  if (isBackground(t)) {
+    // Nobody acted, so the details are for the curious: fold them away behind a plain explanation.
+    const site = String(t.facts.domain ?? "This site");
+    return h(
+      "div",
+      { class: "stack" },
+      h("p", {}, `${site}'s page sent this while ${agent} wasn't clicking or typing there. Pages do this all the time: analytics, keeping you signed in, refreshing what's on screen.`),
+      h("p", {}, "Crossbar stopped it because it couldn't tell whether it changes anything. ", h("strong", {}, "Deny is the safe choice."), " At worst the page doesn't update something; allow it if the page looks broken."),
+      h("details", { class: "tech" }, h("summary", { class: "small muted" }, "Technical details"), table),
+    );
+  }
   return h(
     "div",
     {},
     why,
-    h("dl", { class: "facts" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
+    table,
     f.tainted ? h("p", { class: "warn small" }, `This session read pages while signed in${f.taintSource ? ` (first: ${originOf(f.taintSource)})` : ""}.`) : null,
     f.fields?.length
       ? h(
@@ -314,7 +378,15 @@ async function ticketScreen(id: string) {
             act("Not a wall — let the agent continue", "", () => api("POST", `/api/tickets/${id}/not-a-wall`)),
             act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
           )
-        : h(
+        : isBackground(t)
+          ? h(
+              "div",
+              { class: "btns" },
+              // Nobody is waiting on a page-made request: the safe answer is the big one.
+              act("Deny", "primary big", () => api("POST", `/api/tickets/${id}/deny`)),
+              h("div", { class: "btn-row" }, act("Allow this once", "", () => api("POST", `/api/tickets/${id}/approve`, { scope: "once" }))),
+            )
+          : h(
             "div",
             { class: "btns" },
             // One big Approve with the default scope (ADR 0019); the other scopes and Deny beside it.
@@ -339,7 +411,7 @@ async function ticketScreen(id: string) {
           { class: "ticket-main" },
           h("div", { class: "origin" }, h("span", { class: "dot", "aria-hidden": "true" }), originOf(f.origin ?? f.url ?? String(t.facts.pattern ?? ""))),
           h("h2", {}, headline(t)),
-          h("p", { class: "muted small" }, final ? t.state : timeLeft(t.expiresAt)),
+          h("p", { class: "muted small" }, final ? t.state : isBackground(t) ? `Sent at ${clock(t.createdAt)} · nobody is waiting on it` : `${deadline(t)} (${clock(t.expiresAt)})`),
           t.hasScreenshot ? h("img", { class: "crop", src: `/api/tickets/${id}/screenshot`, alt: "What the page looked like when the request was held" }) : null,
         ),
         h(

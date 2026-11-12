@@ -85,8 +85,53 @@ export function headline(t: TicketView): string {
     return kind === "login" ? `${agent} needs you to log in to ${d}` : kind === "verification" ? `${agent} needs you to confirm a payment with your bank on ${d}` : kind === "captcha" ? `${agent} hit a ${String(f.vendor)} check on ${d}` : `${d} is blocking ${agent}`;
   }
   if (t.kind === "proposal") return `${agent} asks to change ${String(f.pattern)}`;
-  if ((f.trigger as { kind?: string } | undefined)?.kind === "page") return `A page on ${String(f.domain ?? "a site")} wants to send data by itself`;
+  if (isBackground(t)) return `${String(f.domain ?? "A site")} sent a request on its own`;
   return `${agent} wants to ${VERB[String(f.actionClass)] ?? "send data"}`;
+}
+
+/** A request the page sent by itself (no agent click or typing just before). Nobody is waiting on it. */
+export function isBackground(t: TicketView): boolean {
+  return t.kind === "approval" && (t.facts.trigger as { kind?: string } | undefined)?.kind === "page";
+}
+
+export interface Inbox {
+  /** Things an agent is waiting on: walls first (the agent is stuck), then the soonest deadline. */
+  needsYou: TicketView[];
+  /** Page-made requests, one group per site, the busiest site first, newest request first. */
+  background: Array<{ domain: string; tickets: TicketView[] }>;
+}
+
+export function sortInbox(tickets: TicketView[]): Inbox {
+  const rank = (t: TicketView) => (t.kind === "challenge" ? 0 : 1);
+  const needsYou = tickets.filter((t) => !isBackground(t)).sort((a, b) => rank(a) - rank(b) || Date.parse(a.expiresAt) - Date.parse(b.expiresAt));
+  const groups = new Map<string, TicketView[]>();
+  for (const t of tickets.filter(isBackground)) {
+    const d = String(t.facts.domain ?? "a site");
+    groups.set(d, [...(groups.get(d) ?? []), t]);
+  }
+  const background = [...groups]
+    .map(([domain, list]) => ({ domain, tickets: list.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)) }))
+    .sort((a, b) => b.tickets.length - a.tickets.length || a.domain.localeCompare(b.domain));
+  return { needsYou, background };
+}
+
+/** What happens if nobody answers, and when. Never a bare countdown. */
+export function deadline(t: TicketView, now = Date.now()): string {
+  const ms = Date.parse(t.expiresAt) - now;
+  const agent = t.agent ?? "The agent";
+  if (ms <= 0) return t.kind === "challenge" ? `${agent} gave up` : t.kind === "proposal" ? "Dropped, nothing changed" : "Denied, nobody answered";
+  const m = Math.ceil(ms / 60_000);
+  const when = m <= 1 ? "in under a minute" : `in ${m} min`;
+  if (t.kind === "challenge") return `${agent} is paused · gives up ${when}`;
+  if (t.kind === "proposal") return `Nothing changes until you answer · dropped ${when}`;
+  return `${agent} is waiting · denied ${when} if you don't answer`;
+}
+
+/** A short label for the kind of thing that needs you. */
+export function kindLabel(t: TicketView): string {
+  if (t.kind === "challenge") return t.facts.kind === "login" ? "Log in" : t.facts.kind === "verification" ? "Confirm payment" : "Get past a check";
+  if (t.kind === "proposal") return "Setting change";
+  return "Approve";
 }
 
 export const SCOPE_LABEL: Record<string, (t: TicketView) => string> = {
@@ -101,14 +146,6 @@ export function toPage(tap: { x: number; y: number }, shown: { width: number; he
   const sx = natural.width / shown.width;
   const sy = natural.height / shown.height;
   return { x: Math.round((tap.x * sx) / deviceScale), y: Math.round((tap.y * sy) / deviceScale) };
-}
-
-export function timeLeft(expiresAt: string, now = Date.now()): string {
-  const ms = Date.parse(expiresAt) - now;
-  if (ms <= 0) return "expired";
-  const m = Math.floor(ms / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  return m > 0 ? `${m} min left` : `${s} s left`;
 }
 
 export function levelLabel(level: string): string {

@@ -36,6 +36,8 @@ describe("block signatures on fixtures", { skip: skipReason }, () => {
     ["/status/429", "soft_block"],
     ["/pages/article", null],
     ["/pages/xo-captcha", "captcha"],
+    ["/pages/submit-form", null],
+    ["/pages/captcha-only", "captcha"],
     ["/pages/xo-login", "login"],
     ["/fixture/adapters/reddit/old-reddit-listing.html", null],
   ];

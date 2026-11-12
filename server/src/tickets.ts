@@ -147,6 +147,13 @@ export class Tickets extends EventEmitter {
   fail(id: string, reason: string): Ticket {
     return this.transition(id, ["claimed", "open"], "failed", { resolution: { reason } });
   }
+  /** A person overrides the verifier: the challenge was a false alarm (ADR 0013). */
+  dismissByPerson(id: string): Ticket {
+    const t = this.get(id);
+    if (t?.kind !== "challenge") throw new TicketError("Only challenges can be dismissed as false alarms.");
+    return this.transition(id, ["open", "claimed"], "resolved", { resolution: { verifiedBy: "person", falseAlarm: true } });
+  }
+
   /** The verifier found the block still there: back to open. */
   reopen(id: string): Ticket {
     const t = this.transition(id, ["claimed"], "open", {});

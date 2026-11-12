@@ -33,6 +33,8 @@ export interface PageFacts {
   passwordFieldOrigins: string[];
   hasOtpField: boolean;
   captchaContainers: string[];
+  /** Captcha widgets inside a form with other fields to fill: they gate sending the form, not reading the page. */
+  formCaptchas: string[];
   textLength: number;
   textSample: string;
 }
@@ -371,18 +373,27 @@ class CdpTab implements Tab {
     walk(frameTree);
     // Probe every frame we can reach: password/OTP fields with their origin, known captcha containers.
     const probe = `(() => {
-      const out = { pw: [], otp: false, containers: [] };
+      const out = { pw: [], otp: false, containers: [], inForm: [] };
       const sel = ${JSON.stringify(CAPTCHA_CONTAINERS)};
+      // A widget inside a form that also has fields a person fills (title, text...) only matters when that
+      // form is sent: it's a form captcha, not a wall over the page.
+      const fieldsBesides = (form, widget) => [...form.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea, select')]
+        .filter((x) => !widget.contains(x) && x.offsetParent !== null).length;
       const scan = (doc) => {
         for (const p of doc.querySelectorAll('input[type=password]')) out.pw.push(p.form && p.form.action ? new URL(p.form.action, doc.location.href).origin : doc.location.origin);
         if (doc.querySelector('input[autocomplete~="one-time-code"]')) out.otp = true;
-        for (const s of sel) if (doc.querySelector(s)) out.containers.push(s);
+        for (const s of sel) {
+          const el = doc.querySelector(s);
+          if (!el) continue;
+          const form = el.closest('form');
+          if (form && fieldsBesides(form, el) > 0) out.inForm.push(s); else out.containers.push(s);
+        }
         for (const f of doc.querySelectorAll('iframe, frame')) { try { if (f.contentDocument) scan(f.contentDocument); } catch (e) {} }
       };
       scan(document);
       return out;
     })()`;
-    type Probe = { pw: string[]; otp: boolean; containers: string[] };
+    type Probe = { pw: string[]; otp: boolean; containers: string[]; inForm: string[] };
     const run = async (session: string): Promise<Probe | null> =>
       ((await this.cdp.send("Runtime.evaluate", { expression: probe, returnByValue: true }, session).catch(() => null))?.result.value as Probe | undefined) ?? null;
     const probes: Probe[] = [];
@@ -417,6 +428,7 @@ class CdpTab implements Tab {
       passwordFieldOrigins: [...new Set(pwOrigins)],
       hasOtpField: probes.some((p) => p.otp),
       captchaContainers: [...new Set(probes.flatMap((p) => p.containers))],
+      formCaptchas: [...new Set(probes.flatMap((p) => p.inForm))],
       textLength: v.len ?? 0,
       textSample: v.text ?? "",
     };

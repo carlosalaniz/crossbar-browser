@@ -1,6 +1,6 @@
 # 0001: Challenge resolver seam
 
-- **Status:** Accepted; amended by [0011](0011-verification-challenge.md) (adds `kind: "verification"`)
+- **Status:** Accepted; amended by [0011](0011-verification-challenge.md) (adds `kind: "verification"`) and [0013](0013-person-overrides-verifier.md) (a person can dismiss a false alarm)
 - **Date:** 2026-11-11
 
 ## Context

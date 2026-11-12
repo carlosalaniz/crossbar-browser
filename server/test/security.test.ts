@@ -592,3 +592,26 @@ describe("approval cards say who triggered the request", () => {
     assert.deepEqual([real.verdict, real.rule], ["hold", "comment"]);
   });
 });
+
+describe("false alarms (ADR 0013)", () => {
+  test("a person can dismiss a wall; the same page doesn't raise it again in that session; tokens can't", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://old.reddit.com/r/x/submit", { title: "submit", facts: { textLength: 900, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] } });
+    const tok = t.token("alice", "act");
+    const c = await t.mcpClient(tok);
+    // Signed in, so the adapter keeps old.reddit.com.
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "read_as_you" }, "user");
+    const r = await c.call("open", { url: "https://old.reddit.com/r/x/submit" });
+    assert.equal(r.state, "blocked");
+    assert.equal((await t.api("POST", `/api/tickets/${r.ticket!.id}/not-a-wall`, { token: tok })).status, 401);
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/claim`, { user: "alice" });
+    const d = await t.api("POST", `/api/tickets/${r.ticket!.id}/not-a-wall`, { user: "alice" });
+    assert.equal(d.status, 200);
+    assert.deepEqual(t.services.tickets.get(r.ticket!.id)!.resolution, { verifiedBy: "person", falseAlarm: true });
+    const w = await c.call("wait_for_ticket", { ticket: r.ticket!.id, timeoutSeconds: 1 });
+    assert.equal((w.data as { state: string }).state, "resolved");
+    assert.equal((await c.call("open", { url: "https://old.reddit.com/r/x/submit" })).state, "ok");
+  });
+});

@@ -126,7 +126,7 @@ export class FakeTab implements Tab {
   }
   async facts(): Promise<PageFacts> {
     const p = this.pages.get(this.url);
-    return { url: this.url, title: p?.title ?? "", status: 200, headers: {}, frameUrls: [], hasPasswordField: false, passwordFieldOrigins: [], hasOtpField: false, captchaContainers: [], textLength: 5000, textSample: p?.content ?? "", ...p?.facts };
+    return { url: this.url, title: p?.title ?? "", status: 200, headers: {}, frameUrls: [], hasPasswordField: false, passwordFieldOrigins: [], hasOtpField: false, captchaContainers: [], formCaptchas: [], textLength: 5000, textSample: p?.content ?? "", ...p?.facts };
   }
   async domTokens() {
     return { classes: [], ids: [], hrefs: [] };

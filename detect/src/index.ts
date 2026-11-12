@@ -20,8 +20,10 @@ export interface PageFactsLike {
   frameUrls: string[];
   hasPasswordField: boolean;
   hasOtpField: boolean;
-  /** Known captcha container selectors present on the page (any frame). */
+  /** Known captcha container selectors present on the page (any frame), outside a fillable form. */
   captchaContainers?: string[];
+  /** Captcha widgets inside a form with other fields to fill (a submit form): not a wall over the page. */
+  formCaptchas?: string[];
   textLength: number;
   textSample: string;
 }
@@ -118,7 +120,10 @@ export const WIDGET_PAGE_TEXT_LIMIT = 6000;
 
 function matches(sig: Signature, f: PageFactsLike): string[] | null {
   const ev: string[] = [];
-  const widgetCounts = sig.anyPage || f.textLength <= WIDGET_PAGE_TEXT_LIMIT || f.hasPasswordField;
+  // A form captcha (the widget sits in a form with other fields, e.g. Reddit's submit form) gates sending
+  // that form, not reading the page; its frames don't make a wall either. Login forms still do.
+  const onlyFormWidgets = !!f.formCaptchas?.length && !f.captchaContainers?.length && !f.hasPasswordField;
+  const widgetCounts = (sig.anyPage || f.textLength <= WIDGET_PAGE_TEXT_LIMIT || f.hasPasswordField) && (sig.anyPage || !onlyFormWidgets);
   if (sig.maxTextLength !== undefined && f.textLength > sig.maxTextLength) return null;
   let any = false;
   if (sig.headers) {

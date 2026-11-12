@@ -343,8 +343,15 @@ class CdpTab implements Tab {
     if (!at) throw new Error(`No visible element with ref ${ref}. Call read again; refs change when the page changes.`);
     await sleep(50);
     // Access Model L4: the element under the click point must be the one the agent chose (no overlay).
-    const under = await this.b.scripts.call<string | null>(this.session, "refAtPoint", { x: at.x, y: at.y });
-    if (under !== ref) throw new Error(`Something else is on top of ${ref} (${under ?? "no ref"}). Not clicking.`);
+    const check = await this.b.scripts.call<{ ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null }>(this.session, "checkPoint", { ref, x: at.x, y: at.y });
+    if (!check.ok) {
+      const c = check.covering;
+      throw new Error(
+        c
+          ? `Something else is on top of ${ref}: ${c.tag}${c.text ? ` "${c.text}"` : ""} [${c.ref}]. Not clicking. If it's a banner or dialog, close it first (click ${c.ref} or its close button), then try again.`
+          : `${ref} isn't on the page any more. Call read again.`,
+      );
+    }
     const base = { x: at.x, y: at.y, button: "left" as const, clickCount: 1 };
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, this.session);
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base }, this.session);

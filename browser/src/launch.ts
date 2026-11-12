@@ -136,6 +136,25 @@ function extensionArgs(paths: string[]): string[] {
   return [`--load-extension=${list}`, `--disable-extensions-except=${list}`];
 }
 
+/** Every Chromium this process started. They die with it, whatever the reason it exits. */
+const children = new Set<ChildProcess>();
+let exitHook = false;
+function track(proc: ChildProcess): void {
+  children.add(proc);
+  proc.once("exit", () => children.delete(proc));
+  if (exitHook) return;
+  exitHook = true;
+  process.once("exit", () => {
+    for (const p of children) {
+      try {
+        p.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+}
+
 export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBrowser> {
   const exe = opts.executablePath ?? findChrome();
   if (!exe) throw new Error("No Chromium found. Set CHROME_PATH.");
@@ -157,6 +176,7 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<LaunchedBr
   ];
   const finalArgs = mergeFeatureFlags(args);
   const proc = spawn(exe, finalArgs, { stdio: ["ignore", "ignore", "pipe"] });
+  track(proc);
   const wsUrl = await new Promise<string>((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error(`Chrome did not start: ${buf.slice(-500)}`)), 15000);

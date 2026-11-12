@@ -26,12 +26,16 @@ Matched on the registrable domain (Public Suffix List). Specific host rules over
 
 | Level | Profile | Meaning | Default for |
 |---|---|---|---|
-| `blocked` | none | The agent can't open it | LAN and private ranges (human-only to change); mail, banking, password managers, cloud consoles, Harbor, Crossbar's own UI |
+| `blocked` | none | The agent can't open it | LAN and private ranges (human-only to change, per host); Harbor; Crossbar's own UI; and sensitive categories while they're off (ADR 0014) |
 | `read` | anonymous | Click, expand, paginate, search, dismiss consent ("reject all") | Every other public site |
 | `read_as_you` | personal | Same, with your logins. Sensitive paths (`/message`, `/chat`, `/inbox`, `/settings`, billing) ask every time. Reading here taints the session | Reached by logging in through a ticket, or approving a proposal |
 | `act_as_you` | personal | Post, vote, save, subscribe; asks unless granted. Irreversible actions always ask | Reached only by approval |
 
 The settings page says: **"Anything the agent reads while signed in, it can repeat elsewhere."**
+
+### Sensitive categories (ADR 0014)
+
+Banking and money, email, password managers, cloud consoles, account and sign-in pages, government and taxes. Each is a permission on the Crossbar account, **off by default**, changed only by a person in Settings. While a category is off, its sites are blocked and the agent is told so. While it's on, they follow the ladder above: anonymous reading, logins through the person, consequences asking. A person's own site rule wins over the category. The host lists are hand-maintained and will miss sites. **[test: sensitive categories are account permissions]**
 
 ## Tokens
 

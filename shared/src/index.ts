@@ -205,6 +205,10 @@ export const LoginBody = z.object({ username: z.string().max(64), password: z.st
 export const CreateTokenBody = z.object({ agentName: z.string().min(1).max(64).describe("Written on every audit row."), kind: TokenKind.default("read") });
 export const SiteBody = z.object({ pattern: z.string().min(3).max(253), level: SiteLevel.optional(), adblock: z.boolean().optional(), device: Device.optional() });
 export const NotifyBody = z.object({ ntfyUrl: z.string().url().nullable().describe("ntfy topic URL, e.g. https://ntfy.sh/my-secret-topic. null turns notifications off.") });
+export const CategoryBody = z.object({
+  category: z.enum(["banking", "mail", "passwords", "cloud", "signin", "government"]).describe("Sensitive category (ADR 0014)."),
+  enabled: z.boolean().describe("On: agents may use these sites under the normal ladder. Off: blocked for agents."),
+});
 export const InviteBody = z.object({ username: z.string().min(1).max(64), password: z.string().min(10).max(256) });
 export const TotpEnableBody = z.object({ secret: z.string(), code: z.string() });
 export const PasswordBody = z.object({ current: z.string(), next: z.string().min(10).max(256) });
@@ -265,6 +269,8 @@ export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/api/settings/notifications", auth: "session", description: "Where notifications go." }),
   r({ method: "PUT", path: "/api/settings/notifications", auth: "session", freshFactor: true, description: "Change where notifications go (human only).", body: NotifyBody }),
   r({ method: "POST", path: "/api/settings/notifications/test", auth: "session", description: "Send a test notification." }),
+  r({ method: "GET", path: "/api/settings/categories", auth: "session", description: "Sensitive categories (banking, mail…) and whether agents may use them." }),
+  r({ method: "PUT", path: "/api/settings/categories", auth: "session", freshFactor: true, description: "Turn a sensitive category on or off for agents (human only, ADR 0014).", body: CategoryBody }),
   r({ method: "GET", path: "/api/openapi.json", auth: "public", description: "OpenAPI document generated from this contract." }),
   r({ method: "POST", path: "/mcp", auth: "token", description: "MCP over streamable HTTP (JSON responses)." }),
   r({ method: "GET", path: "/mcp", auth: "token", description: "MCP: no server-initiated stream; returns 405." }),

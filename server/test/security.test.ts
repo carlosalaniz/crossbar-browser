@@ -615,3 +615,42 @@ describe("false alarms (ADR 0013)", () => {
     assert.equal((await c.call("open", { url: "https://old.reddit.com/r/x/submit" })).state, "ok");
   });
 });
+
+describe("sensitive categories are account permissions (ADR 0014)", () => {
+  test("banking is off until a person turns it on; agents can't; per-site rules still win", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const tok = t.token("alice", "act");
+    const c = await t.mcpClient(tok);
+    for (const u of ["https://www.schwab.com/", "https://client.schwab.com/app/accounts/summary/", "https://www.fidelity.com/", "https://www.bbva.mx/"]) {
+      const v = t.services.sites.resolve("alice", u);
+      assert.deepEqual([v.level, v.category], ["blocked", "banking"], u);
+    }
+    // Off: refused, with a reason that tells the agent what to do (and not to ask for passwords).
+    const off = await c.call("open", { url: "https://client.schwab.com/" });
+    assert.equal(off.state, "denied");
+    assert.match(String(off.reason), /banking and money.*off for agents.*Settings.*Don't ask them for passwords/s);
+    // Agents can't turn it on: no tool, and the route needs a person.
+    assert.equal((await c.call("set_site", { pattern: "schwab.com", level: "read" })).state, "denied");
+    assert.equal((await t.api("PUT", "/api/settings/categories", { token: tok, body: { category: "banking", enabled: true } })).status, 401);
+    // A person turns banking on: the normal ladder applies (anonymous reading).
+    const on = await t.api("PUT", "/api/settings/categories", { user: "alice", body: { category: "banking", enabled: true } });
+    assert.deepEqual(on.json.enabled, ["banking"]);
+    assert.equal(t.services.sites.resolve("alice", "https://www.schwab.com/").level, "read");
+    assert.equal((await c.call("open", { url: "https://www.schwab.com/" })).state, "ok");
+    // Other categories stay off; a person's own rule for one bank wins over the category.
+    assert.equal(t.services.sites.resolve("alice", "https://mail.google.com/").level, "blocked");
+    t.services.sites.set("alice", { pattern: "fidelity.com", level: "blocked" }, "user");
+    assert.equal(t.services.sites.resolve("alice", "https://www.fidelity.com/").level, "blocked");
+    // And with banking off again, one bank can still be allowed on its own.
+    await t.api("PUT", "/api/settings/categories", { user: "alice", body: { category: "banking", enabled: false } });
+    t.services.sites.set("alice", { pattern: "schwab.com", level: "read" }, "user");
+    assert.equal(t.services.sites.resolve("alice", "https://www.schwab.com/").level, "read");
+    assert.equal(t.services.sites.resolve("alice", "https://www.chase.com/").level, "blocked");
+    // The list and the instructions agents get.
+    const list = (await t.api("GET", "/api/settings/categories", { user: "alice" })).json as unknown as Array<{ id: string; enabled: boolean }>;
+    assert.deepEqual(list.map((x) => x.id), ["banking", "mail", "passwords", "cloud", "signin", "government"]);
+    const init = (await (await fetch(`${t.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${t.token("alice")}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) })).json()) as { result: { instructions: string } };
+    assert.match(init.result.instructions, /never ask the user for passwords/);
+  });
+});

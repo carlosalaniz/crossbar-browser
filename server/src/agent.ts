@@ -5,7 +5,7 @@ import type { BrowserPool, Profile, Tab, TabPolicy } from "@crossbar/browser/poo
 import type { GateRequest, HeldRequest, Decision } from "@crossbar/browser/gate";
 import type { AdBlocker } from "@crossbar/browser/adblock";
 import { detect, type BlockState } from "@crossbar/detect";
-import { matchReadOperation, adapterFor } from "@crossbar/adapters";
+import { matchReadOperation, adapterFor, isTelemetry } from "@crossbar/adapters";
 import type { TokenInfo } from "./tokens.ts";
 import type { Sites } from "./sites.ts";
 import { registrable, hostOf } from "./sites.ts";
@@ -37,6 +37,20 @@ export interface Services {
 
 const SENSITIVE_PATH = /\/(message|messages|chat|inbox|settings|billing|account\/(billing|payment)|payments?|wallet|subscriptions?)(\/|$|\?)/i;
 const LONG_SEGMENT = 40;
+
+/**
+ * A captcha widget's own calls to its vendor (reCAPTCHA reload/clr, hCaptcha checks, Turnstile). They
+ * carry no user data, and holding them only makes approval noise and breaks the widget for the person.
+ */
+const CAPTCHA_ENDPOINTS = [/^(www\.)?(google|recaptcha)\.(com|net)\/recaptcha\//, /^([a-z0-9-]+\.)*hcaptcha\.com\//, /^challenges\.cloudflare\.com\//, /^([a-z0-9-]+\.)*(arkoselabs|funcaptcha)\.com\//, /^([a-z0-9-]+\.)*captcha-delivery\.com\//];
+export function isCaptchaEndpoint(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return CAPTCHA_ENDPOINTS.some((re) => re.test(`${u.hostname}${u.pathname}`));
+  } catch {
+    return false;
+  }
+}
 
 /** Global sensitive paths plus the site adapter's own. */
 export function isSensitive(url: string): boolean {
@@ -117,6 +131,11 @@ export class AgentSession {
   private readonly newHolds: string[] = [];
   private pageDomain = new Map<Profile, string>();
   paused = false;
+  /** Tabs behind an open challenge ticket (ticket id → tab id): their background writes are refused quietly. */
+  private readonly blockedTabTickets = new Map<string, string>();
+  private get blockedTabs(): Set<string> {
+    return new Set(this.blockedTabTickets.values());
+  }
   /** Tabs a person is driving during takeover: the gate lets them act, still logging everything. */
   readonly takeoverTabs = new Set<string>();
   lastUsed = Date.now();
@@ -295,6 +314,12 @@ export class AgentSession {
     if (r.method === "OPTIONS") return { verdict: "allow", rule: "cors_preflight" };
     const op = graphqlOperation(r.postData);
     if (matchReadOperation(r.url, r.method, op)) return { verdict: "allow", rule: "read_list" };
+    const exit = this.tainted && !this.usedBeforeTaint.has(domain);
+    if (isTelemetry(r.url)) return { verdict: "deny", rule: "telemetry" };
+    if (!exit && isCaptchaEndpoint(r.url)) return { verdict: "allow", rule: "captcha_widget" };
+    // A tab whose page is behind an open captcha/login ticket goes quiet: its background writes can't be
+    // meaningfully approved, and asking for each one would teach the person to rubber-stamp.
+    if (this.blockedTabs.has(tab.id)) return { verdict: "deny", rule: "tab_blocked" };
     let cls = classify(r.method, r.url, r.postData, op);
     if (this.tainted && !this.usedBeforeTaint.has(domain)) cls = "taint_exit";
     if (this.token.kind === "read" && cls !== "taint_exit") return { verdict: "deny", rule: "read_token_cannot_act" };
@@ -419,7 +444,8 @@ export class AgentSession {
     }
     const values = extractValues(r.url, r.postData);
     const overlap = this.tainted ? Math.max(0, ...values.map((v) => this.readIndex.overlap(v.value))) : 0;
-    const flagged = verdict === "deny" && rule !== "blocked_ad" ? true : overlap >= 24;
+    const quiet = ["blocked_ad", "telemetry", "tab_blocked"].includes(rule ?? "") || (rule ?? "").startsWith("site_blocked");
+    const flagged = verdict === "deny" && !quiet ? true : overlap >= 24;
     this.s.activity.log({
       userId: this.userId,
       tokenId: this.token.id,
@@ -467,6 +493,7 @@ export class AgentSession {
       }
     }
     if (t.kind === "challenge" && facts.sessionId === this.id) {
+      if (t.state !== "open" && t.state !== "claimed") this.blockedTabTickets.delete(t.id);
       if (t.state === "claimed") this.paused = true;
       if (t.state === "resolved" || t.state === "failed" || t.state === "expired" || t.state === "open") this.paused = false;
       if (t.state === "resolved" && facts.kind === "login") this.active = "personal";
@@ -499,6 +526,7 @@ export class AgentSession {
       existing ??
       this.s.tickets.create({ userId: this.userId, tokenId: this.token.id, agentName: this.token.agentName, kind: "challenge", facts: { ...block, url, profile: tab.profile, sessionId: this.id, domain: registrable(hostOf(url)) } });
     if (!existing) this.s.notifier.ticket(t);
+    this.blockedTabTickets.set(t.id, tab.id);
     const reason = block.kind === "login" ? `Log in to ${registrable(hostOf(url))} is needed.` : block.kind === "verification" ? "The bank wants the payment confirmed by a person (3-D Secure)." : block.kind === "captcha" ? `A ${block.vendor} check is in the way.` : block.kind === "consent" ? "A consent wall is in the way." : "The site is blocking or limiting this request.";
     return { state: "blocked", reason, ticket: ticketRef(t), hint: "A person has been asked to handle it. Call wait_for_ticket, then retry." };
   }
@@ -584,10 +612,6 @@ export class AgentSession {
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") return { state: "denied", reason: "Only http and https URLs can be opened." };
     const adapter = adapterFor(url);
-    if (adapter?.preferredReadHost && u.hostname !== adapter.preferredReadHost && adapter.domains.includes(registrable(u.hostname)) && u.hostname.startsWith("www.")) {
-      u.hostname = adapter.preferredReadHost;
-      url = u.toString();
-    }
     const domain = registrable(u.hostname);
     const site = this.s.sites.resolve(this.userId, url);
     if (site.level === "blocked") return { state: "denied", reason: `${site.matched ?? domain} is blocked for agents. Only a person can change that in the web app.` };
@@ -599,6 +623,13 @@ export class AgentSession {
       }
       // Plain link after taint, or approved: anonymous profile.
       profile = "anon";
+    }
+    // The adapter's read host for this profile (ADR 0012): only between the site's own read hosts and www.
+    const readHost = profile === "personal" ? adapter?.readHosts?.signedIn : adapter?.readHosts?.anonymous;
+    const swappable = [adapter?.readHosts?.signedIn, adapter?.readHosts?.anonymous, `www.${domain}`, domain];
+    if (readHost && u.hostname !== readHost && swappable.includes(u.hostname)) {
+      u.hostname = readHost;
+      url = u.toString();
     }
     if (profile === "personal" && isSensitive(url) && !this.peekGrant(domain, "sensitive_path", this.requestHash({ method: "GET", url }, null))) {
       return this.askBeforeNavigation(u, "sensitive_path", `${u.pathname} on ${domain} is a private page on a signed-in site. A person has to approve each time.`);
@@ -614,6 +645,8 @@ export class AgentSession {
     this.pageDomain.set(profile, u.hostname);
     // A navigation the agent asked for is pre-approved by open(); the policy still sees it.
     this.lastNavRefusal = null;
+    // Navigating away leaves the wall behind; the ticket stays for the person, but the tab speaks again.
+    for (const [ticketId, tabId] of this.blockedTabTickets) if (tabId === tab.id) this.blockedTabTickets.delete(ticketId);
     const nav = await tab.navigate(url);
     const navError = (nav as { error?: string }).error;
     if (navError && /BLOCKED_BY_CLIENT/.test(navError) && this.lastNavRefusal) {

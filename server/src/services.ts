@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { BrowserPool } from "@crossbar/browser/pool";
@@ -36,7 +36,13 @@ export function loadMasterKey(dataDir: string): Buffer {
 }
 
 export function buildServices(o: BuildOptions): Services & { tokens: Tokens } {
-  mkdirSync(o.dataDir, { recursive: true });
+  // The data dir holds the master key, the database and browser profiles: owner-only.
+  mkdirSync(o.dataDir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(o.dataDir, 0o700);
+  } catch {
+    /* not ours to change (e.g. a mounted volume) */
+  }
   const db = openDb(join(o.dataDir, "crossbar.db"));
   const keys = new Keys(loadMasterKey(o.dataDir));
   return {

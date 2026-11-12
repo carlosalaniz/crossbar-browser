@@ -10,12 +10,17 @@ export interface SiteAdapter {
   readOperations?: { graphql?: string[]; endpoints?: Array<{ method: string; path: RegExp }> };
   /** Consent banner: selector for "reject all". */
   consent?: { rejectSelector: string };
+  /** Telemetry endpoints (host + path): refused quietly, never a ticket. */
+  telemetry?: RegExp[];
   /** Paths that always ask on signed-in sessions. */
   sensitivePaths?: RegExp[];
   /** Items for scroll-and-extract. */
   items?: { selector: string; keyAttr?: string };
-  /** Host the adapter prefers for reading (e.g. old.reddit.com). */
-  preferredReadHost?: string;
+  /**
+   * Hosts the adapter prefers for reading, per profile (ADR 0012). Reddit: old.reddit.com paginates
+   * server-side but walls logged-out visitors, so it's only for the signed-in profile.
+   */
+  readHosts?: { signedIn?: string; anonymous?: string };
 }
 
 export const ADAPTERS: SiteAdapter[] = [reddit];
@@ -31,6 +36,18 @@ function hostOf(url: string): string {
 export function adapterFor(url: string): SiteAdapter | undefined {
   const host = hostOf(url);
   return ADAPTERS.find((a) => a.domains.some((d) => host === d || host.endsWith(`.${d}`)));
+}
+
+/** True if this request goes to one of the adapter's telemetry endpoints. */
+export function isTelemetry(url: string): boolean {
+  let hp = "";
+  try {
+    const u = new URL(url);
+    hp = `${u.hostname}${u.pathname}`;
+  } catch {
+    return false;
+  }
+  return !!adapterFor(url)?.telemetry?.some((re) => re.test(hp));
 }
 
 /** True if this non-GET request is on the adapter's read list. */

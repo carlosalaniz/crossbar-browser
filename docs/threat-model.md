@@ -118,6 +118,12 @@ Per ADRs 0001 and 0011: `detect/` emits `BlockState` (`captcha`, `verification` 
 - **Background traffic**: Chromium's own phoning home is turned off with flags and managed policy (`deploy/browser/policies.json`). One request ignores every flag tried: Chrome's AI Mode eligibility check to `www.google.com`. It carries no page data, goes through the proxy, and is turned off by policy in the container. **[test: browser/test/proxy-chrome.test.ts]**
 - **Sandbox**: Chromium's sandbox stays on. The browser container uses Docker's default seccomp profile plus `clone`, `unshare`, `setns` and `chroot` (`deploy/browser/seccomp.json`), with no capabilities and `no-new-privileges`.
 - **Harbor installs** can't declare an internal network or a seccomp profile. The browser container firewalls itself to the proxy (`deploy/browser/egress-firewall.sh`, `net-admin` permission), then runs as a non-root user with no capabilities and `no-new-privs`. Chromium's sandbox can't start under Harbor's seccomp; the browser refuses to start until an operator turns the visible "Chromium sandbox" setting off. Crossbar never turns it off on its own.
+- **Quiet refusals** (no ticket, no flag):
+  - background writes from a tab whose page sits behind an open captcha or login ticket;
+  - adapter-listed telemetry (Reddit's `pi.reddit.com`, `perfMetrics`, `/reports`).
+
+  A captcha widget's own calls to its vendor (reCAPTCHA, hCaptcha, Turnstile, Arkose, DataDome) pass, except as an exit after a signed-in read. Asking about any of these trains people to rubber-stamp. **[test: live Reddit findings]**
+- **Dev data** lives outside the repository (`~/.crossbar/dev`, mode 0700). `npm run lint` fails if a database, key, `.env` or profile is ever tracked.
 - **Intranet names**: single-label hosts (`app`, `nas`), `.local`, `.lan`, `.internal`, `.home.arpa`, `localhost` and private IP literals are blocked on the ladder before the proxy sees them; the proxy refuses private addresses after DNS as the second layer.
 - **Popups** opened by pages are closed: no tab owns them, so no policy fits. During takeover, a popup the person's tab opens (a "Sign in with…" window) joins the takeover with the same policy, and control returns to the tab when it closes. **[test: server/test/e2e.test.ts]**
 - **Takeover reach**: a person driving a tab may use sites blocked for agents by default (sign-in providers are for humans only), but never LAN or private addresses, this app, or a site blocked on purpose.

@@ -8,3 +8,10 @@ web/dist/
 deploy/.env
 *.live.html
 /.cache
+
+# Runtime data: databases, keys, browser profiles. Never commit.
+data/
+*.db
+*.db-wal
+*.db-shm
+master.key

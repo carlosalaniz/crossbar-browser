@@ -80,6 +80,7 @@ export const SIGNATURES: Signature[] = [
   { id: "three-d-secure-frame", kind: "verification", vendor: "3ds", anyPage: true, frames: [/three[-_]?d[-_]?s|3d[-_]?secure|\/acs(\/|$)|(^|[./-])acs[.-]/i] },
   { id: "rate-limited", kind: "soft_block", vendor: "generic", status: [429] },
   { id: "forbidden-short", kind: "soft_block", vendor: "generic", status: [403, 503], maxTextLength: 1500 },
+  { id: "reddit-humanity", kind: "captcha", vendor: "reddit", text: [/Prove your humanity/i], maxTextLength: 3000 },
   { id: "reddit-blocked", kind: "soft_block", vendor: "reddit", text: [/You've been blocked by network security|whoa there, pardner/i], maxTextLength: 3000 },
   { id: "login-url", kind: "login", vendor: "generic", url: [/\/(login|signin|sign-in|log-in|auth\/login|accounts\/login)(\/|\?|$)/i] },
   // Truncated content behind an app gate. Limited to shortish pages: a full page with an "Open in app"

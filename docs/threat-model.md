@@ -57,11 +57,12 @@ Approving tickets and proposals; showing or regenerating tokens; unblocking LAN 
 | Reading | Never asks | Click, expand, load more, paginate, GET search, scroll, consent "reject all", any public site in the anonymous profile |
 | Consequential | Asks unless granted | Non-GET not on the site's read list; using your login on a `read` site; after taint, data to a domain the session hasn't used |
 | Irreversible or private | Always asks | Pay/checkout, delete, change email or password, OAuth authorize, private messages, sensitive paths on signed-in sites |
+| A page's own background requests | Pass (ADR 0027) | What a page sends with no agent action in the last 3 s: analytics, sensors, autosave, push checks. Still held if it carries text read while signed in or text the agent typed, or is irreversible/private (row above) |
 | Not possible | Never | eval, raw CDP, cookie or storage tools; downloads; `file:`, `chrome:`, `devtools:` URLs |
 
 ## Approvals
 
-1. **Notification**: agent, site and reason, from server-controlled fields only. Deny inline. Asks within 30 s merge.
+1. **Notification**: agent, site and what each choice does, from server-controlled fields only. Deny inline. A burst from one agent merges into one follow-up (ADR 0019).
 2. **Link**: single use, bound to one ticket, valid 10 minutes, works only with a logged-in app session, never an agent token.
 3. **Approval page**: only facts the browser observed (origin, method, path, GraphQL operation, form fields with agent-typed text highlighted, screenshot crop). Page labels and the agent's reason appear as quotes, marked unverified.
 4. **Bound and rechecked**: an approval is tied to a hash of the request and the element's fingerprint; just before the click the browser checks what is under the click point.

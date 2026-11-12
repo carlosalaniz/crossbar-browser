@@ -78,7 +78,18 @@ export function isSensitive(url: string): boolean {
 
 /** Classify a held request's consequence from what the browser observed (never from button labels). */
 export function classify(method: string, url: string, body?: string, operation?: string | null): ActionClass {
-  const hay = `${url} ${operation ?? ""}`.toLowerCase();
+  // The request's own path and operation, never its query: trackers carry the page's URL as a parameter,
+  // and "?ref=https://purchase.example/..." isn't a purchase (live: made-in-china.com, 12 Nov 2026).
+  let path = url;
+  let host = "";
+  try {
+    const u = new URL(url);
+    path = u.pathname;
+    host = u.hostname;
+  } catch {
+    /* keep the raw string */
+  }
+  const hay = `${path} ${operation ?? ""} ${/^(checkout|pay|payments?|billing)\./.test(host) ? "checkout" : ""}`.toLowerCase();
   const keys = body ? extractValues("http://x/", body).map((v) => v.key.toLowerCase()).join(" ") : "";
   if (/oauth|\/authorize|consent/.test(hay)) return "oauth";
   if (/checkout|payment|purchase|\/pay\b|\/order|billing|subscribe\/confirm|donate/.test(hay)) return "pay";
@@ -338,10 +349,21 @@ export class AgentSession {
     // Never after taint to a new domain.
     if (!exit && isTelemetry(r.url, r.postData)) return { verdict: "allow", rule: "telemetry" };
     if (!exit && isCaptchaEndpoint(r.url)) return { verdict: "allow", rule: "captcha_widget" };
-    // A tab whose page is behind an open captcha/login ticket goes quiet: its background writes can't be
-    // meaningfully approved, and asking for each one would teach the person to rubber-stamp.
-    if (this.blockedTabs.has(tab.id)) return { verdict: "deny", rule: "tab_blocked" };
     let cls = classify(r.method, r.url, r.postData, op);
+    // What a page sends by itself, with no agent action just before, is what it would send with the person
+    // sitting in front of it (analytics, sensors, autosave, push checks): it passes (ADR 0027). Two things
+    // still stop: text read while signed in leaving in it, and consequences no page takes without a click.
+    // Text the agent typed counts as the agent's, however late the page sends it: a misled agent could type
+    // what it read into a field and leave the page to send it.
+    if (this.triggerFor(tab).kind === "page") {
+      const values = extractValues(r.url, r.postData);
+      const carriesSignedIn = this.tainted && values.some((v) => this.readIndex.overlap(v.value) >= 24);
+      const carriesTyped = values.some((v) => this.typed.some((t) => t.length >= 3 && v.value.includes(t)));
+      if (!carriesSignedIn && !carriesTyped && !ALWAYS_ASK.has(cls)) return { verdict: "allow", rule: "page_background" };
+    }
+    // A tab whose page is behind an open captcha/login ticket goes quiet: what's left can't be meaningfully
+    // approved, and asking for each one would teach the person to rubber-stamp.
+    if (this.blockedTabs.has(tab.id)) return { verdict: "deny", rule: "tab_blocked" };
     if (this.tainted && !this.usedBeforeTaint.has(domain)) cls = "taint_exit";
     if (this.token.kind === "read" && cls !== "taint_exit") return { verdict: "deny", rule: "read_token_cannot_act" };
     if (this.useGrant(domain, cls, this.requestHash(r, op))) return { verdict: "allow", rule: `grant:${cls}` };
@@ -423,7 +445,17 @@ export class AgentSession {
     this.newHolds.push(ticket.id);
     if (fields.some((f) => f.overlapsSignedInText >= 24)) this.flag(domain, "data read while signed in was about to be sent here", "gate_overlap");
     void h.settled.then((how) => {
-      if (how === "timeout") this.logHeld(tab, r, "timeout", cls);
+      if (how !== "timeout") return;
+      this.logHeld(tab, r, "timeout", cls);
+      // A page's own request that ran out: nothing is left to decide, so it leaves Requests (an agent's
+      // stays, since approving it lets the agent repeat the action).
+      if ((ticket.facts as { trigger?: { kind?: string } }).trigger?.kind === "page") {
+        try {
+          this.s.tickets.expireNow(ticket.id);
+        } catch {
+          /* already decided */
+        }
+      }
     });
     void tab
       .screenshot()

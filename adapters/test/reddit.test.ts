@@ -24,7 +24,9 @@ describe("reddit adapter (declarative)", () => {
     for (const p of ["/message/inbox", "/chat", "/settings/privacy", "/prefs/"]) assert.ok(reddit.sensitivePaths!.some((re) => re.test(p)), p);
     assert.ok(!reddit.sensitivePaths!.some((re) => re.test("/r/selfhosted/")));
   });
-  test("prefers old.reddit.com", () => assert.equal(reddit.preferredReadHost, "old.reddit.com"));
+  test("old.reddit.com only when signed in; www for anonymous reads (ADR 0012)", () => {
+    assert.deepEqual(reddit.readHosts, { signedIn: "old.reddit.com", anonymous: "www.reddit.com" });
+  });
 });
 
 describe("reddit adapter against its saved fixture", { skip: skipReason }, () => {

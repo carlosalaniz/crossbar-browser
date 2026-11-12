@@ -515,3 +515,37 @@ describe("3-D Secure (ADR 0011)", () => {
     assert.equal(t.services.sites.resolve("alice", "shop.example").level, "read");
   });
 });
+
+describe("live Reddit findings (11 Nov 2026)", () => {
+  test("anonymous Reddit reads use www; signed in, old.reddit.com (ADR 0012)", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const c = await t.mcpClient(t.token("alice"));
+    assert.match(String(((await c.call("open", { url: "https://old.reddit.com/r/selfhosted/" })).data as { url: string }).url), /^https:\/\/www\.reddit\.com\//);
+    assert.match(String(((await c.call("open", { url: "https://reddit.com/r/selfhosted/" })).data as { url: string }).url), /^https:\/\/www\.reddit\.com\//);
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "read_as_you" }, "user");
+    assert.match(String(((await c.call("open", { url: "https://www.reddit.com/r/selfhosted/" })).data as { url: string }).url), /^https:\/\/old\.reddit\.com\//);
+  });
+
+  test("a tab behind an open wall goes quiet; captcha widgets pass; telemetry is refused; no junk tickets", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });
+    pool.pages.set("https://www.reddit.com/r/x/", { content: "posts" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    const r = await c.call("open", { url: "https://www.reddit.com/login/" });
+    assert.equal(r.state, "blocked");
+    const tab = [...pool.tabs].reverse()[0]!;
+    const before = t.services.tickets.listOpen("alice").length;
+    assert.equal(tab.simulate({ method: "POST", url: "https://www.google.com/recaptcha/enterprise/reload?k=x", resourceType: "XHR" }).rule, "captcha_widget");
+    assert.equal(tab.simulate({ method: "POST", url: "https://pi.reddit.com/v4/p", resourceType: "Ping" }).rule, "telemetry");
+    const gql = tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' });
+    assert.deepEqual([gql.verdict, gql.rule], ["deny", "tab_blocked"]);
+    assert.equal(t.services.tickets.listOpen("alice").length, before, "background traffic created tickets");
+    assert.equal(((await c.call("list_flags")).data as unknown as unknown[]).length, 0, "quiet refusals flagged domains");
+    // Leaving the wall: the tab speaks again (writes ask as usual).
+    await c.call("open", { url: "https://www.reddit.com/r/x/" });
+    assert.equal(tab.simulate({ method: "POST", url: "https://www.reddit.com/svc/shreddit/graphql", resourceType: "Fetch", postData: '{"id":"abc"}' }).verdict, "hold");
+  });
+});

@@ -1,6 +1,6 @@
 # 0004: Scroll and extract
 
-- **Status:** Accepted
+- **Status:** Accepted; Reddit's read host amended by [0012](0012-reddit-read-host.md)
 - **Date:** 2026-11-11
 
 ## Decision

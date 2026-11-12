@@ -92,3 +92,8 @@ describe("frame precision (findings from a live Stripe run)", () => {
     assert.equal(detect({ ...base, textLength: 900, frameUrls: frames, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] })?.kind, "captcha");
   });
 });
+
+test("Reddit's own walls (seen live, 11 Nov 2026)", () => {
+  assert.deepEqual([detect({ ...base, url: "https://www.reddit.com/r/selfhosted/", title: "Reddit - Prove your humanity", textLength: 300 })?.kind, "captcha"], ["captcha", "captcha"]);
+  assert.equal(detect({ ...base, url: "https://www.reddit.com/r/selfhosted/", title: "", textSample: "You've been blocked by network security. If you think you've been blocked by mistake, file a ticket below", textLength: 200 })?.kind, "soft_block");
+});

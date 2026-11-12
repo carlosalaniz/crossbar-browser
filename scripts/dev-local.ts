@@ -3,7 +3,9 @@
 // and the app with a local Chromium behind the proxy. The test site answers as http://site-a.test:<port> (all
 // scenarios) and http://testsite.test:<port> (browser/ test pages); the port starts at 8090.
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 import { lookup } from "node:dns/promises";
 import { createEgressProxy } from "../proxy/src/proxy.ts";
@@ -30,19 +32,33 @@ await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
 const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
 console.log(`egress proxy ${proxyUrl}; test site http://site-a.test:${site.port}/ and http://testsite.test:${site.port}/pages/article`);
 
+// Dev data lives outside the repo, readable only by you (it holds the master key and your logins).
+const dataDir = process.env.CROSSBAR_DATA ?? join(homedir(), ".crossbar", "dev");
+const legacy = resolve(import.meta.dirname, "../data");
+if (!process.env.CROSSBAR_DATA && existsSync(legacy) && !existsSync(dataDir)) {
+  mkdirSync(join(homedir(), ".crossbar"), { recursive: true, mode: 0o700 });
+  renameSync(legacy, dataDir);
+  // The old master key sat in the repo folder; start with a fresh one.
+  rmSync(join(dataDir, "master.key"), { force: true });
+  console.log(`Moved dev data from ${legacy} to ${dataDir} and rotated its master key.`);
+}
+mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+chmodSync(dataDir, 0o700);
+
 const port = process.env.CROSSBAR_PORT ?? String(await freePort(8080));
 if (port !== "8080" && !process.env.CROSSBAR_PORT) console.log(`Port 8080 is in use; using ${port}.`);
 const app = spawn(process.execPath, [resolve(import.meta.dirname, "../server/src/main.ts")], {
   stdio: "inherit",
   env: {
     ...process.env,
-    CROSSBAR_DATA: process.env.CROSSBAR_DATA ?? resolve(import.meta.dirname, "../data"),
+    CROSSBAR_DATA: dataDir,
     CROSSBAR_PORT: port,
     CROSSBAR_ORIGIN: process.env.CROSSBAR_ORIGIN ?? `http://localhost:${port}`,
     CROSSBAR_PROXY: proxyUrl,
     // Chromium resolves nothing itself; the proxy does all DNS.
     CROSSBAR_HOST_RESOLVER_RULES: "MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
-    CROSSBAR_HEADLESS: process.env.CROSSBAR_HEADLESS ?? "1",
+    // A visible Chrome, like production (sites block headless browsers). CROSSBAR_HEADLESS=1 to hide it.
+    CROSSBAR_HEADLESS: process.env.CROSSBAR_HEADLESS ?? "0",
     CROSSBAR_PACE_MS: process.env.CROSSBAR_PACE_MS ?? "1000",
     // The test site's sign-in provider (testsite/README.md). Only tightens.
     CROSSBAR_SIGNIN_PROVIDERS: process.env.CROSSBAR_SIGNIN_PROVIDERS ?? "accounts.idp.test",

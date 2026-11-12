@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "lint": "eslint . && node scripts/check-spdx.mjs",
+    "lint": "eslint . && node scripts/check-spdx.mjs && node scripts/check-no-secrets.mjs",
     "test": "node --test --test-concurrency=1 \"*/test/**/*.test.ts\"",
     "test:proxy": "node --test \"proxy/test/**/*.test.ts\"",
     "test:browser": "node --test --test-concurrency=1 \"browser/test/**/*.test.ts\"",

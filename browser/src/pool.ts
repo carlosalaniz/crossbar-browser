@@ -219,10 +219,27 @@ class ManagedBrowser {
 
   private route(r: GateRequest): Verdict | Decision {
     const tab = this.tabsBySession.get(r.rootSessionId);
-    if (tab?.policy) return tab.policy.decide(r);
-    // No owning tab (service worker, shared worker, a page we're closing): reads only.
+    if (tab?.policy) {
+      const d = tab.policy.decide(r);
+      // Remember each tab's page origin, so its service and shared workers can be matched to it.
+      if (r.resourceType === "Document" && r.sessionId === r.rootSessionId && verdictOf(d) === "allow") tab.pageOrigin = originOf(r.url);
+      return d;
+    }
+    // No owning tab (service worker, shared worker, a page we're closing): reads pass.
     if (r.method === "GET" || r.method === "HEAD") return { verdict: "allow", rule: "no_tab_read" };
-    return { verdict: "deny", rule: "no_tab" };
+    // A worker's write is judged by every open tab of its origin, and passes only if all of them would
+    // let it through: a shared worker serves tabs with different taint, so it gets the strictest (audit S21).
+    // A hold becomes a deny: no single tab owns the request to show it on.
+    const origin = /worker/.test(r.targetType) ? originOf(r.targetUrl) : "";
+    const owners = origin ? [...this.tabsBySession.values()].filter((t) => t.policy && t.pageOrigin === origin) : [];
+    if (owners.length === 0) return { verdict: "deny", rule: "no_tab" };
+    let rule = "";
+    for (const o of owners) {
+      const d = o.policy!.decide(r);
+      if (verdictOf(d) !== "allow") return { verdict: "deny", rule: `worker:${typeof d === "string" ? d : (d.rule ?? d.verdict)}` };
+      rule ||= typeof d === "string" ? d : (d.rule ?? "allow");
+    }
+    return { verdict: "allow", rule: `worker:${rule}` };
   }
 
   async newTab(profile: Profile): Promise<CdpTab> {
@@ -241,9 +258,20 @@ class ManagedBrowser {
   }
 }
 
+const verdictOf = (d: Verdict | Decision): Verdict => (typeof d === "string" ? d : d.verdict);
+function originOf(u: string): string {
+  try {
+    return new URL(u).origin;
+  } catch {
+    return "";
+  }
+}
+
 class CdpTab implements Tab {
   readonly id = randomUUID();
   policy?: TabPolicy;
+  /** Origin of the page this tab last loaded. */
+  pageOrigin = "";
   popupsAllowed = false;
   private readonly popupCbs = new Set<(t: Tab) => void>();
   private readonly closeCbs = new Set<() => void>();

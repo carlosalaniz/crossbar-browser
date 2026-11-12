@@ -116,7 +116,7 @@ Each item gets an ADR proposing the scoped alternative; code follows only after 
 | Finding | Current trigger | Proposed path |
 |---|---|---|
 | S23 interception latency | Every request pauses in the gate | Profile and speed up the allow path; keep full coverage |
-| S24 all WebSockets fail | Sites using sockets (chat, live updates, some challenge SDKs) break | DNR dynamic allow rules for the top-level site's own domain group on sites at `read_as_you` or above, untainted sessions only; socket opens logged. A real security trade-off (the gate can't see socket payloads): owner decides |
+| S24 all WebSockets fail | Chat apps, real-time editors and live prices break; GitHub and Reddit lose live updates | **Decided: keep blocked** (ADR 0020). An allowed socket skips approval, taint and logging; a fake or black-holed socket neither makes the apps work nor hides anything from the server |
 | S25 no HTTP/3 | Weak signal | Keep; revisit only if a site measurably flags it |
 | S26 WebRTC UDP blocked | Missing ICE candidates | Keep; if a site needs WebRTC, TURN over TCP through the proxy |
 | S28 permissions pre-denied | `denied` with no prompt is unusual for a fresh profile | Default to "ask"; prompts are dismissed automatically (state stays `prompt`); a person can grant per origin |

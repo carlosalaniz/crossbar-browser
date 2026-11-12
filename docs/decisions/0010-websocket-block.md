@@ -17,7 +17,7 @@ Branded Google Chrome (137 and later) ignores `--load-extension`; Chromium and C
 - The launcher loads it with `--load-extension` and `--disable-extensions-except`.
 - The browser runs **Chrome for Testing or Chromium**, never branded Chrome. Development and CI pin Chrome for Testing (`scripts/ensure-browser.mjs`, installed into `.cache/browsers` by `npm test`); the browser container will ship Chromium or the same pinned build.
 - The WebSocket tests fail, rather than skip, when the browser can't load extensions.
-- Adapters that need WebSockets later get an allow rule through DNR dynamic rules, scoped to their domain group. That design is deferred.
+- Adapters that need WebSockets later get an allow rule through DNR dynamic rules, scoped to their domain group. That design is deferred. (ADR 0020 later decided against any allowance: sockets stay blocked.)
 
 ## Consequences
 

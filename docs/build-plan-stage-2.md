@@ -23,7 +23,7 @@ These still override convenience, in every step: the network gate fails closed, 
 - **Phone checks:** from step 2 on, every UI or notification change is also checked on the LAN stack from a phone-sized viewport (Playwright-free: the existing browser-driven UI flow test, run at 390×844 and 1280×800), and the PR body says so.
 - **START.md:** the Status section is updated at the end of each working session.
 - **Stop and ask the owner** (open an issue or leave a note in START.md, and continue with the next independent step) when:
-  - a change loosens a security boundary beyond what an accepted ADR allows (for example the WebSocket allowance, S24);
+  - a change loosens a security boundary beyond what an accepted ADR allows;
   - a measurement contradicts an assumption in this plan (for example the Xvfb window-visibility check);
   - a step needs a credential, an account, or a live third-party site.
 
@@ -157,7 +157,7 @@ Today a browser starts on first use for each user and profile and stays running.
 
 ### Steps 11–13
 
-Signal plan F, G and H, unchanged. Step 13 starts with ADRs; the S24 WebSocket allowance needs the owner's decision before code.
+Signal plan F, G and H, unchanged. Step 13 starts with ADRs. WebSockets stay blocked (ADR 0020, owner's decision).
 
 ## Done for this stage
 

@@ -244,6 +244,7 @@ export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/api/tickets/:id/screenshot", auth: "session", description: "Screenshot taken when the request was held." }),
   r({ method: "POST", path: "/api/tickets/:id/claim", auth: "session", description: "Take control to resolve a challenge (human takeover resolver)." }),
   r({ method: "POST", path: "/api/tickets/:id/done", auth: "session", description: "I'm done: run the verifier on a challenge." }),
+  r({ method: "POST", path: "/api/tickets/:id/not-a-wall", auth: "session", description: "A person says a challenge is a false alarm: close it and let the agent continue (ADR 0013)." }),
   r({ method: "POST", path: "/api/tickets/:id/input", auth: "session", description: "Takeover input event.", body: TakeoverInput }),
   r({ method: "GET", path: "/api/grants", auth: "session", description: "Your grants." }),
   r({ method: "DELETE", path: "/api/grants/:id", auth: "session", description: "Revoke a grant." }),

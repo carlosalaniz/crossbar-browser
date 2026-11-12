@@ -97,3 +97,11 @@ test("Reddit's own walls (seen live, 11 Nov 2026)", () => {
   assert.deepEqual([detect({ ...base, url: "https://www.reddit.com/r/selfhosted/", title: "Reddit - Prove your humanity", textLength: 300 })?.kind, "captcha"], ["captcha", "captcha"]);
   assert.equal(detect({ ...base, url: "https://www.reddit.com/r/selfhosted/", title: "", textSample: "You've been blocked by network security. If you think you've been blocked by mistake, file a ticket below", textLength: 200 })?.kind, "soft_block");
 });
+
+test("a captcha inside a submit form is not a wall (Reddit's submit page, seen live)", () => {
+  const submit = { ...base, url: "https://old.reddit.com/r/AI_Agents/submit?selftext=true", textLength: 1800, formCaptchas: [".g-recaptcha:not([data-size=invisible])"], frameUrls: ["https://www.google.com/recaptcha/api2/anchor?k=x"] };
+  assert.equal(detect(submit), null);
+  // A login form with a captcha is still a wall, and so is a bare challenge page.
+  assert.equal(detect({ ...submit, hasPasswordField: true })?.kind, "captcha");
+  assert.equal(detect({ ...base, url: "https://www.google.com/sorry/index", textLength: 400, captchaContainers: [".g-recaptcha:not([data-size=invisible])"] })?.kind, "captcha");
+});

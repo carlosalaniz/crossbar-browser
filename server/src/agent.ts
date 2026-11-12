@@ -35,6 +35,15 @@ export interface Services {
   appOrigin?: string;
 }
 
+function wallKey(kind: string, url: string): string {
+  try {
+    const u = new URL(url);
+    return `${kind}|${u.origin}${u.pathname}`;
+  } catch {
+    return `${kind}|${url}`;
+  }
+}
+
 /** A held request within this long after the agent's click or typing is shown as caused by it. */
 export const TRIGGER_WINDOW_MS = 3000;
 
@@ -136,6 +145,11 @@ export class AgentSession {
   private readonly newHolds: string[] = [];
   private pageDomain = new Map<Profile, string>();
   paused = false;
+  /** Walls a person dismissed as false alarms in this session: kind + origin + path. */
+  private readonly dismissedWalls = new Set<string>();
+  dismissWall(kind: string, url: string): void {
+    this.dismissedWalls.add(wallKey(kind, url));
+  }
   /** Tabs behind an open challenge ticket (ticket id → tab id): their background writes are refused quietly. */
   private readonly blockedTabTickets = new Map<string, string>();
   private get blockedTabs(): Set<string> {
@@ -547,7 +561,8 @@ export class AgentSession {
 
   private async checkBlock(tab: Tab): Promise<(BlockState & { passwordFieldOrigins: string[] }) | null> {
     const f = await tab.facts().catch(() => null);
-    const b = f ? detect(f) : null;
+    let b = f ? detect(f) : null;
+    if (b && this.dismissedWalls.has(wallKey(b.kind, f!.url))) b = null;
     // The takeover page warns when a password field sits on a different origin from the ticket's.
     return b ? { ...b, passwordFieldOrigins: f!.passwordFieldOrigins } : null;
   }

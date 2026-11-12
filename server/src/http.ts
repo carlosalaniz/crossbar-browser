@@ -329,6 +329,22 @@ export function createApp(o: AppOptions) {
       return { verified: true, ticket: ticketView(s.tickets.resolve(t.id, { verifiedBy: "detect" })) };
     },
 
+    "POST /api/tickets/:id/not-a-wall": async (c) => {
+      const t = requireTicket(c);
+      if (t.kind !== "challenge") throw new HttpError(400, "Only captcha and login tickets can be dismissed.");
+      const f = t.facts as { sessionId: string; kind: string; url: string; evidence?: string[] };
+      const tk = takeovers.get(t.id);
+      if (tk) {
+        await tk.session.endTakeover(tk.base);
+        takeovers.delete(t.id);
+      }
+      // The person is the authority here (ADR 0013). Remember it, so the same page doesn't raise it again.
+      registry.sessions.get(f.sessionId)?.dismissWall(f.kind, f.url);
+      const resolved = s.tickets.dismissByPerson(t.id);
+      console.log(`false alarm dismissed by a person: ${f.kind} on ${f.url} (${(f.evidence ?? []).join("; ")})`);
+      return ticketView(resolved);
+    },
+
     // ---- grants, activity, flags ----
     "GET /api/grants": (c) => s.grants.list(c.human!.userId),
     "DELETE /api/grants/:id": (c) => ({ revoked: s.grants.revoke(c.params.id!, c.human!.userId) }),

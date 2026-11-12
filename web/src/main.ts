@@ -344,7 +344,13 @@ async function ticketScreen(id: string) {
     final
       ? h("p", { class: "state" }, `This request is ${t.state}.`)
       : t.kind === "challenge"
-        ? h("div", { class: "btns" }, h("a", { class: "btn primary", href: `#/takeover/${t.id}` }, "Take control"), act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)))
+        ? h(
+            "div",
+            { class: "btns" },
+            h("a", { class: "btn primary", href: `#/takeover/${t.id}` }, "Take control"),
+            act("Not a wall — let the agent continue", "", () => api("POST", `/api/tickets/${id}/not-a-wall`)),
+            act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
+          )
         : h(
             "div",
             { class: "btns" },
@@ -444,6 +450,13 @@ async function takeoverScreen(id: string) {
         h("button", { class: "btn small", onclick: () => send({ type: "mouseWheel", x: css.w / 2, y: css.h / 2, deltaY: 400 }) }, "↓"),
       ),
       h("button", {
+        class: "btn ghost small",
+        onclick: async () => {
+          await api("POST", `/api/tickets/${id}/not-a-wall`).catch((e) => (err.textContent = (e as Error).message));
+          location.hash = "#/";
+        },
+      }, "This isn't a captcha or login — let the agent continue"),
+      h("button", {
         class: "btn primary",
         onclick: async () => {
           try {
@@ -453,7 +466,18 @@ async function takeoverScreen(id: string) {
               // The verifier reopened the ticket: offer to pick it up again.
               for (const c of cleanup) c();
               cleanup = [];
-              err.replaceChildren(`It still looks like a ${r.still} page. `, h("button", { class: "btn small", onclick: () => void takeoverScreen(id) }, "Take control again"));
+              err.replaceChildren(
+                `It still looks like a ${r.still} page. `,
+                h("button", { class: "btn small", onclick: () => void takeoverScreen(id) }, "Take control again"),
+                " ",
+                h("button", {
+                  class: "btn small",
+                  onclick: async () => {
+                    await api("POST", `/api/tickets/${id}/not-a-wall`);
+                    location.hash = "#/";
+                  },
+                }, "It's not a wall — continue"),
+              );
             }
           } catch (e) {
             err.textContent = (e as Error).message;

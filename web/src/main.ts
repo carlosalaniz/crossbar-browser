@@ -412,7 +412,8 @@ async function takeoverScreen(id: string) {
     await send({ type: "mousePressed", x: p.x, y: p.y, button: "left" });
     await send({ type: "mouseReleased", x: p.x, y: p.y, button: "left" });
   });
-  // A native text field, so your password manager can fill it; text is forwarded as keystrokes.
+  // A native text field, so your password manager can fill it. Send inserts the whole string at once
+  // (Input.insertText), not as keystrokes, so the page sees no key events (docs/bot-detection.md E).
   const field = h("input", { class: "input", placeholder: "Type here, then Send", autocomplete: "current-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false" }) as HTMLInputElement;
   const onUrl = (u: string) => {
     // The real origin is drawn outside the stream, so the page can't fake it.

@@ -74,7 +74,7 @@ export const DEFAULT_BLOCKED: string[] = CATEGORY_IDS.flatMap((c) => [...CATEGOR
 export interface SiteView {
   level: SiteLevel;
   adblock: boolean;
-  device: "desktop" | "mobile";
+  device: "narrow" | "desktop" | "mobile";
   matched: string | null;
   source: SiteRule["source"] | "category";
   /** The sensitive category this site belongs to, if any (ADR 0014). */
@@ -115,7 +115,7 @@ export class Sites {
   }
 
   list(userId: string): SiteRule[] {
-    const rows = this.db.prepare("SELECT pattern, level, adblock, device, source FROM sites WHERE user_id = ? ORDER BY pattern").all(userId) as Array<{ pattern: string; level: SiteLevel; adblock: number; device: "desktop" | "mobile"; source: SiteRule["source"] }>;
+    const rows = this.db.prepare("SELECT pattern, level, adblock, device, source FROM sites WHERE user_id = ? ORDER BY pattern").all(userId) as Array<{ pattern: string; level: SiteLevel; adblock: number; device: "narrow" | "desktop" | "mobile"; source: SiteRule["source"] }>;
     return rows.map((r) => ({ ...r, adblock: !!r.adblock }));
   }
 
@@ -123,16 +123,16 @@ export class Sites {
   resolve(userId: string, urlOrHost: string): SiteView {
     const host = (urlOrHost.includes("/") ? hostOf(urlOrHost) : urlOrHost).toLowerCase();
     const bare = host.replace(/^\[|\]$/g, "");
-    if (!host) return { level: "blocked", adblock: true, device: "desktop", matched: null, source: "default" };
-    if (this.selfHosts.includes(host)) return { level: "blocked", adblock: true, device: "desktop", matched: host, source: "default" };
+    if (!host) return { level: "blocked", adblock: true, device: "narrow", matched: null, source: "default" };
+    if (this.selfHosts.includes(host)) return { level: "blocked", adblock: true, device: "narrow", matched: host, source: "default" };
     // LAN and private ranges by literal: the proxy enforces after DNS; this catches literals early.
     if (isIP(bare) && /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|0\.|::1$|f[cd]|fe[89ab])/i.test(bare)) {
-      return { level: "blocked", adblock: true, device: "desktop", matched: "private", source: "default" };
+      return { level: "blocked", adblock: true, device: "narrow", matched: "private", source: "default" };
     }
     // Single-label names (app, router, nas) are intranet hosts.
-    if (!isIP(bare) && !host.includes(".")) return { level: "blocked", adblock: true, device: "desktop", matched: "lan", source: "default" };
+    if (!isIP(bare) && !host.includes(".")) return { level: "blocked", adblock: true, device: "narrow", matched: "lan", source: "default" };
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan") || host.endsWith(".home.arpa")) {
-      return { level: "blocked", adblock: true, device: "desktop", matched: "lan", source: "default" };
+      return { level: "blocked", adblock: true, device: "narrow", matched: "lan", source: "default" };
     }
     // Most specific user rule: walk from the full host up to the registrable domain.
     const reg = registrable(host);
@@ -146,20 +146,20 @@ export class Sites {
     const stmt = this.db.prepare("SELECT pattern, level, adblock, device, source FROM sites WHERE user_id = ? AND pattern = ?");
     let category: Category | undefined;
     for (const c of candidates) {
-      const row = stmt.get(userId, c) as { pattern: string; level: SiteLevel; adblock: number; device: "desktop" | "mobile"; source: SiteRule["source"] } | undefined;
+      const row = stmt.get(userId, c) as { pattern: string; level: SiteLevel; adblock: number; device: "narrow" | "desktop" | "mobile"; source: SiteRule["source"] } | undefined;
       // A person's own rule for this host or domain wins over the category (most specific first).
       if (row) return { level: row.level, adblock: !!row.adblock, device: row.device, matched: row.pattern, source: row.source, category: category ?? this.categoryOfHost.get(c) };
       category ??= this.categoryOfHost.get(c);
       if (category) {
         // Sensitive category: blocked unless the account has turned it on (then the normal ladder applies).
-        if (!this.enabledCategories(userId).has(category)) return { level: "blocked", adblock: true, device: "desktop", matched: c, source: "category", category };
-        return { level: "read", adblock: true, device: "desktop", matched: c, source: "category", category };
+        if (!this.enabledCategories(userId).has(category)) return { level: "blocked", adblock: true, device: "narrow", matched: c, source: "category", category };
+        return { level: "read", adblock: true, device: "narrow", matched: c, source: "category", category };
       }
     }
-    return { level: "read", adblock: true, device: "desktop", matched: null, source: "default" };
+    return { level: "read", adblock: true, device: "narrow", matched: null, source: "default" };
   }
 
-  set(userId: string, rule: { pattern: string; level?: SiteLevel; adblock?: boolean; device?: "desktop" | "mobile" }, source: SiteRule["source"]): SiteRule {
+  set(userId: string, rule: { pattern: string; level?: SiteLevel; adblock?: boolean; device?: "narrow" | "desktop" | "mobile" }, source: SiteRule["source"]): SiteRule {
     const pattern = normalisePattern(rule.pattern);
     const cur = this.resolve(userId, pattern);
     const next = { pattern, level: rule.level ?? cur.level, adblock: rule.adblock ?? cur.adblock, device: rule.device ?? cur.device, source };

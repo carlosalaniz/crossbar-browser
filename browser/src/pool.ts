@@ -12,7 +12,13 @@ import { scrollAndExtract, type ScrollOptions, type ScrollResult } from "./page-
 import { typeInto, SIGN_IN_PROVIDERS } from "./input-guard.ts";
 
 export type Profile = "anon" | "personal";
-export type DeviceKind = "desktop" | "mobile";
+export type DeviceKind = "narrow" | "desktop" | "mobile";
+
+/**
+ * The narrow window (ADR 0028): as narrow as Chrome lets a person drag a window (measured: 500 px), and tall
+ * enough that the page has a phone's shape (390x844 is 0.46 wide per tall): 500x1170 on a 1920x1200 screen.
+ */
+export const NARROW_WINDOW = { width: 500, height: 1170 };
 
 export interface TabPolicy {
   decide(r: GateRequest): Verdict | Decision;
@@ -261,6 +267,9 @@ class ManagedBrowser {
 
   /** Bounds of the browser's first window; new windows copy them so every window looks the same. */
   private windowBounds?: { left?: number; top?: number; width?: number; height?: number };
+  firstWindowBounds(): { left?: number; top?: number; width?: number; height?: number } | undefined {
+    return this.windowBounds;
+  }
 
   async newTab(profile: Profile): Promise<CdpTab> {
     // A window of its own, not a background tab in a shared window: two sessions (or a session and a person
@@ -627,8 +636,23 @@ class CdpTab implements Tab {
 
   private emulated: DeviceKind | null = null;
 
+  private windowShape: "narrow" | "full" | null = null;
+
+  /** Size this tab's own window (ADR 0017: one window per tab): narrow and phone-shaped, or the full first window. */
+  private async shapeWindow(shape: "narrow" | "full"): Promise<void> {
+    if (this.windowShape === shape) return;
+    const win = await this.cdp.send("Browser.getWindowForTarget", { targetId: this.targetId }).catch(() => null);
+    const full = this.b.firstWindowBounds();
+    if (!win || !full?.width || !full.height) return;
+    const bounds = shape === "narrow" ? { left: full.left ?? 0, top: full.top ?? 0, width: NARROW_WINDOW.width, height: Math.min(NARROW_WINDOW.height, full.height) } : full;
+    await this.cdp.send("Browser.setWindowBounds", { windowId: win.windowId, bounds: { windowState: "normal" } }).catch(() => {});
+    await this.cdp.send("Browser.setWindowBounds", { windowId: win.windowId, bounds }).catch(() => {});
+    this.windowShape = shape;
+  }
+
   async emulate(device: DeviceKind): Promise<void> {
     const major = this.b.version.split("/")[1]?.split(".")[0] ?? "157";
+    await this.shapeWindow(device === "desktop" ? "full" : "narrow");
     if (device === "mobile") {
       await this.cdp.send("Emulation.setDeviceMetricsOverride", MOBILE, this.session);
       await this.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 }, this.session);
@@ -676,7 +700,7 @@ class CdpTab implements Tab {
       // Back from mobile: an empty override restores the browser's own UA and client hints.
       await this.cdp.send("Emulation.setUserAgentOverride", { userAgent: "" }, this.session);
     }
-    this.emulated = "desktop";
+    this.emulated = device;
   }
 
   async startScreencast(onFrame: (jpeg: string, meta: FrameMeta) => void, opts: { maxWidth?: number; maxHeight?: number; fps?: number } = {}): Promise<void> {

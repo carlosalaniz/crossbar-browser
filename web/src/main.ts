@@ -470,7 +470,20 @@ async function sitesScreen() {
             "div",
             { class: "row small" },
             h("label", {}, h("input", { type: "checkbox", checked: s.adblock, onchange: (e: Event) => save({ pattern: s.pattern, adblock: (e.target as HTMLInputElement).checked }) }), " Block ads"),
-            h("label", {}, h("input", { type: "checkbox", checked: s.device === "mobile", onchange: (e: Event) => save({ pattern: s.pattern, device: (e.target as HTMLInputElement).checked ? "mobile" : "desktop" }) }), " Mobile layout"),
+            h(
+              "label",
+              {},
+              "Window ",
+              h(
+                "select",
+                { class: "input small", onchange: (e: Event) => save({ pattern: s.pattern, device: (e.target as HTMLSelectElement).value }) },
+                [
+                  ["narrow", "Narrow (phone-shaped)"],
+                  ["desktop", "Full desktop"],
+                  ["mobile", "Emulated phone"],
+                ].map(([v, label]) => h("option", { value: v, selected: s.device === v }, label!)),
+              ),
+            ),
             h("span", { class: "muted" }, `from ${s.source}`),
           ),
         );

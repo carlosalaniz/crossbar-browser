@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS sites (
   pattern TEXT NOT NULL,
   level TEXT NOT NULL,
   adblock INTEGER NOT NULL DEFAULT 1,
-  device TEXT NOT NULL DEFAULT 'desktop',
+  device TEXT NOT NULL DEFAULT 'narrow',
   source TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (user_id, pattern)
@@ -167,6 +167,12 @@ CREATE TABLE IF NOT EXISTS settings (
 export function openDb(path: string): DB {
   const db = new DatabaseSync(path);
   db.exec(SCHEMA);
+  // ADR 0028: the default device became the narrow window. Rows saved before had "desktop" only because
+  // that was the default (the one choice was "mobile layout"), so they follow the new default once.
+  if (!getMeta(db, "device_default_narrow")) {
+    db.prepare("UPDATE sites SET device = 'narrow' WHERE device = 'desktop'").run();
+    setMeta(db, "device_default_narrow", "1");
+  }
   return db;
 }
 

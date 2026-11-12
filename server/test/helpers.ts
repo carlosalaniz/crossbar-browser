@@ -31,7 +31,7 @@ export class FakeTab implements Tab {
   policy?: TabPolicy;
   url = "about:blank";
   history: string[] = [];
-  device: DeviceKind = "desktop";
+  device: DeviceKind | null = null;
   typed: Array<{ ref: string; text: string }> = [];
   inputs: InputEvent[] = [];
   readonly results: Array<{ req: GateRequest; verdict: Verdict; rule?: string; held?: HeldRequest; outcome?: string; timeout?: () => void }> = [];

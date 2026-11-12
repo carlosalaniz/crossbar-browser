@@ -146,3 +146,42 @@ export function clientToPage(p: { x: number; y: number }, drawn: { left: number;
   if (rx < 0 || ry < 0 || rx > 1 || ry > 1) return null;
   return { x: Math.round(rx * page.w), y: Math.round(ry * page.h) };
 }
+
+export interface PageBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The text field under a point on the page, if any (so a tap on it can open the phone keyboard at once). */
+export function fieldAt<T extends PageBox>(fields: T[], p: { x: number; y: number }, slop = 6): T | null {
+  return fields.find((f) => p.x >= f.x - slop && p.x <= f.x + f.w + slop && p.y >= f.y - slop && p.y <= f.y + f.h + slop) ?? null;
+}
+
+/**
+ * Zoom and pan for the take-control view so `target` (page px) fills the width of the visible area and sits
+ * in its upper part, above the keyboard. `fit` is image px per page px at zoom 1; `origin` is where the
+ * unzoomed image's top-left sits in the view. Returns a transform: translate(x, y) scale(s), origin 0 0.
+ */
+export function zoomToBox(target: PageBox, view: { w: number; h: number }, fit: number, origin: { x: number; y: number }, maxZoom = 4): { s: number; x: number; y: number } {
+  const byWidth = (view.w * 0.94) / Math.max(1, target.w * fit);
+  const byHeight = (view.h * 0.8) / Math.max(1, target.h * fit);
+  const s = Math.max(1, Math.min(maxZoom, byWidth, byHeight));
+  const cx = (target.x + target.w / 2) * fit;
+  const cy = (target.y + target.h / 2) * fit;
+  return { s, x: view.w / 2 - origin.x - s * cx, y: view.h * 0.42 - origin.y - s * cy };
+}
+
+/** Key and code for a character a plain keyboard types, so typing reaches the page as key presses. */
+export function keyFor(ch: string): { key: string; code: string; shift: boolean } | null {
+  if (/^[a-z]$/.test(ch)) return { key: ch, code: `Key${ch.toUpperCase()}`, shift: false };
+  if (/^[A-Z]$/.test(ch)) return { key: ch, code: `Key${ch}`, shift: true };
+  if (/^[0-9]$/.test(ch)) return { key: ch, code: `Digit${ch}`, shift: false };
+  if (ch === " ") return { key: " ", code: "Space", shift: false };
+  const punct: Record<string, string> = { ".": "Period", ",": "Comma", "-": "Minus", "/": "Slash", ";": "Semicolon", "'": "Quote", "=": "Equal", "[": "BracketLeft", "]": "BracketRight", "\\": "Backslash", "`": "Backquote" };
+  if (punct[ch]) return { key: ch, code: punct[ch]!, shift: false };
+  const shifted: Record<string, string> = { "!": "Digit1", "@": "Digit2", "#": "Digit3", $: "Digit4", "%": "Digit5", "^": "Digit6", "&": "Digit7", "*": "Digit8", "(": "Digit9", ")": "Digit0", _: "Minus", "+": "Equal", ":": "Semicolon", '"': "Quote", "<": "Comma", ">": "Period", "?": "Slash", "{": "BracketLeft", "}": "BracketRight", "|": "Backslash", "~": "Backquote" };
+  if (shifted[ch]) return { key: ch, code: shifted[ch]!, shift: true };
+  return null;
+}

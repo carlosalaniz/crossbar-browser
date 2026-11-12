@@ -69,6 +69,21 @@ export interface InputEvent {
 
 /** What has focus in the page after a person's input, so the phone can open the right keyboard. */
 export type FocusKind = "text" | "password" | "otp" | "frame" | "none";
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+/**
+ * What the take-control window needs to keep typing in view (takeover only): the focused field and the
+ * form around it, and the text fields on screen, so a tap on one can open the phone keyboard at once.
+ * Field kinds only, never values or page text. Page CSS pixels.
+ */
+export interface ViewState {
+  focus: (Box & { kind: Exclude<FocusKind, "none">; area: Box | null }) | null;
+  fields: Array<Box & { kind: Exclude<FocusKind, "none" | "frame"> }>;
+}
 
 /** Keys without text need their virtual key code, or Chrome doesn't run the default action (delete, move, submit). */
 const KEY_CODES: Record<string, number> = { Backspace: 8, Tab: 9, Enter: 13, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
@@ -101,8 +116,8 @@ export interface Tab {
   onClose(cb: () => void): () => void;
   /** Takeover input, from a person. Not an agent tool. */
   input(ev: InputEvent): Promise<void>;
-  /** What has focus now (takeover only), so the viewer can offer the right keyboard. */
-  focusKind(): Promise<FocusKind>;
+  /** Focused field, its form and the fields on screen (takeover only). */
+  viewState(): Promise<ViewState>;
   screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string>;
   close(): Promise<void>;
 }
@@ -710,21 +725,56 @@ class CdpTab implements Tab {
     }
   }
 
-  async focusKind(): Promise<FocusKind> {
-    const k = await this.b.scripts
-      .inspect<FocusKind>(
-        this.session,
-        `(() => { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
-          if (!a || a === document.body) return 'none';
-          if (a.isContentEditable || a.tagName === 'TEXTAREA') return 'text';
-          if (a.tagName === 'IFRAME' || a.tagName === 'FRAME') return 'frame';
-          if (a.tagName !== 'INPUT') return 'none';
-          if (a.type === 'password') return 'password';
-          if ((a.autocomplete || '').includes('one-time-code')) return 'otp';
-          return ['text', 'email', 'search', 'tel', 'url', 'number', ''].includes(a.type) ? 'text' : 'none'; })()`,
-      )
-      .catch(() => "none" as const);
-    return k;
+  async viewState(): Promise<ViewState> {
+    const empty: ViewState = { focus: null, fields: [] };
+    return (
+      (await this.b.scripts
+        .inspect<ViewState>(
+          this.session,
+          `(() => {
+            const kindOf = (a) => {
+              if (a.isContentEditable || a.tagName === 'TEXTAREA') return 'text';
+              if (a.tagName !== 'INPUT') return 'none';
+              if (a.disabled || a.readOnly) return 'none';
+              if (a.type === 'password') return 'password';
+              if ((a.autocomplete || '').includes('one-time-code')) return 'otp';
+              return ['text', 'email', 'search', 'tel', 'url', 'number', ''].includes(a.type) ? 'text' : 'none';
+            };
+            const box = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; };
+            const onScreen = (b) => b.w > 0 && b.h > 0 && b.x < innerWidth && b.y < innerHeight && b.x + b.w > 0 && b.y + b.h > 0;
+            const fields = [];
+            for (const el of document.querySelectorAll('input, textarea, [contenteditable]')) {
+              const k = kindOf(el);
+              const b = box(el);
+              if (k !== 'none' && onScreen(b)) fields.push({ ...b, kind: k });
+              if (fields.length >= 60) break;
+            }
+            let a = document.activeElement;
+            while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+            let focus = null;
+            if (a && a !== document.body) {
+              const k = a.tagName === 'IFRAME' ? 'frame' : kindOf(a);
+              if (k !== 'none') {
+                // The area to zoom to: the visible controls of the field's form (a <form> element is often
+                // as wide as the page), or of the nearest container that holds a few of them.
+                let scope = a.closest && a.closest('form');
+                if (!scope) for (let p = a.parentElement, i = 0; p && i < 6 && !scope; p = p.parentElement, i++) if (p.querySelectorAll('input, button, select, textarea').length >= 2) scope = p;
+                let area = null;
+                for (const c of scope ? scope.querySelectorAll('input:not([type=hidden]), textarea, select, button, [role=button], label') : [a]) {
+                  const b = box(c);
+                  if (!onScreen(b)) continue;
+                  area = area ? { x: Math.min(area.x, b.x), y: Math.min(area.y, b.y), w: Math.max(area.x + area.w, b.x + b.w) - Math.min(area.x, b.x), h: Math.max(area.y + area.h, b.y + b.h) - Math.min(area.y, b.y) } : b;
+                }
+                if (area) area = { x: area.x - 16, y: area.y - 16, w: area.w + 32, h: area.h + 32 };
+                if (area && (area.w * area.h > innerWidth * innerHeight * 0.8 || area.h > innerHeight)) area = null;
+                focus = { ...box(a), kind: k, area };
+              }
+            }
+            return { focus, fields };
+          })()`,
+        )
+        .catch(() => empty)) ?? empty
+    );
   }
 
   async screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string> {

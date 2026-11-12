@@ -139,8 +139,8 @@ export class FakeTab implements Tab {
     onFrame("ZmFrZQ==", { width: 390, height: 844 });
   }
   async stopScreencast() {}
-  async focusKind() {
-    return "none" as const;
+  async viewState() {
+    return { focus: null, fields: [] };
   }
   async input(ev: InputEvent) {
     this.inputs.push(ev);

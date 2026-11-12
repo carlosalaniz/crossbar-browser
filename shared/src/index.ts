@@ -263,6 +263,7 @@ export const ROUTES: RouteDef[] = [
   r({ method: "POST", path: "/api/tickets/:id/done", auth: "session", description: "I'm done: run the verifier on a challenge." }),
   r({ method: "POST", path: "/api/tickets/:id/not-a-wall", auth: "session", description: "A person says a challenge is a false alarm: close it and let the agent continue (ADR 0013)." }),
   r({ method: "POST", path: "/api/tickets/:id/input", auth: "session", description: "Takeover input event.", body: TakeoverInput }),
+  r({ method: "GET", path: "/api/tickets/:id/view", auth: "session", description: "Takeover: the focused field, its form and the text fields on screen (kinds and positions only), so the viewer can keep typing in view." }),
   r({ method: "GET", path: "/api/grants", auth: "session", description: "Your grants." }),
   r({ method: "DELETE", path: "/api/grants/:id", auth: "session", description: "Revoke a grant." }),
   r({ method: "GET", path: "/api/activity", auth: "session", description: "Your activity log (shapes, no values)." }),

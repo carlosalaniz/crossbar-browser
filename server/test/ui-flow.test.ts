@@ -153,17 +153,20 @@ describe("web app flow", { skip: skipReason }, () => {
     await until(hasText("still looks like a login page"));
     await clickText("Take control again");
     await until(`(document.querySelector('.tk-img')?.src ?? '').startsWith('data:image/jpeg')`);
-    // The phone keyboard field forwards what is typed as it's typed (here, a word at a time).
-    const typeKbd = (v: string) => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.value = ${JSON.stringify(v)}; k.dispatchEvent(new Event('input')); return true; })()`);
-    const clearKbd = () => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })); return true; })()`);
+    // The typing bar: a fill arrives whole; typing arrives key by key as each character is typed.
+    const fillKbd = (v: string) => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.value = ${JSON.stringify(v)}; k.dispatchEvent(new InputEvent('input', { inputType: 'insertReplacementText' })); return true; })()`);
+    const typeKey = (ch: string) => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.value += ${JSON.stringify(ch)}; k.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: ${JSON.stringify(ch)} })); return true; })()`);
+    const tabKbd = () => ev(`(() => { const k = document.querySelector('.tk-kbd'); k.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })); return true; })()`);
     await clickText("Tab");
+    // Focus moved to the username field: the typing bar shows what you're typing into.
+    await until(hasText("Typing into: Text"));
+    await fillKbd("carlos");
     await sleep(250);
-    await typeKbd("carlos");
-    await sleep(250);
-    await clearKbd();
-    await sleep(250);
-    await typeKbd("hunter2");
-    await sleep(250);
+    await tabKbd();
+    await until(hasText("Typing into: Password"));
+    assert.equal(await ev(`document.querySelector('.tk-kbd').type`), "password");
+    for (const ch of "hunter2") await typeKey(ch);
+    await sleep(400);
     await clickText("Enter");
     await sleep(800);
     await clickText("Done");

@@ -208,7 +208,6 @@ export class AgentSession {
     const offPopup = tab.onPopup((popup) => {
       this.popups.add(popup);
       this.takeoverTabs.add(popup.id);
-      void popup.emulate("mobile").catch(() => {});
       onCurrent?.(popup);
       popup.onClose(() => {
         this.popups.delete(popup);
@@ -218,10 +217,8 @@ export class AgentSession {
     });
     this.takeoverCleanup.set(tab.id, offPopup);
     const cur = await tab.currentUrl().catch(() => "");
-    if (!existing || cur === "about:blank" || profile !== this.active) {
-      await tab.emulate("mobile");
-      await tab.navigate(url);
-    } else await tab.emulate("mobile");
+    // The device stays what the site uses (ADR 0015): the phone viewer scales the stream instead.
+    if (!existing || cur === "about:blank" || profile !== this.active) await tab.navigate(url);
     return tab;
   }
 

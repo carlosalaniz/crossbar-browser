@@ -371,7 +371,8 @@ describe("challenges (ADR 0001)", () => {
     const claim = await t.api("POST", `/api/tickets/${id}/claim`, { user: "alice" });
     assert.equal(claim.status, 200);
     const personal = pool.tabs.find((x) => x.profile === "personal")!;
-    assert.equal(personal.device, "mobile");
+    // The device stays the site's (ADR 0015): takeover doesn't turn a desktop session into a phone.
+    assert.notEqual(personal.device, "mobile");
     assert.equal((await c.call("read")).state, "blocked");
     await t.api("POST", `/api/tickets/${id}/input`, { user: "alice", body: { type: "insertText", text: "hunter2" } });
     assert.deepEqual(personal.inputs[0], { type: "insertText", text: "hunter2" });

@@ -37,3 +37,24 @@ describe("takeover", () => {
     expect(timeLeft(new Date(Date.now() - 1).toISOString())).toBe("expired");
   });
 });
+
+import { textEdit, fitSize, clientToPage } from "../src/logic.ts";
+
+describe("takeover helpers", () => {
+  test("typing becomes backspaces plus inserted text", () => {
+    expect(textEdit("", "h")).toEqual({ backspaces: 0, insert: "h" });
+    expect(textEdit("hel", "hello")).toEqual({ backspaces: 0, insert: "lo" });
+    expect(textEdit("helo", "hel")).toEqual({ backspaces: 1, insert: "" });
+    // Autocorrect replaces a word.
+    expect(textEdit("teh", "the ")).toEqual({ backspaces: 2, insert: "he " });
+    expect(textEdit("", "correct-horse")).toEqual({ backspaces: 0, insert: "correct-horse" });
+  });
+  test("the page fits the view, never upscaled unless asked", () => {
+    expect(fitSize({ w: 1280, h: 800 }, { w: 390, h: 700 })).toEqual({ w: 390, h: 244, scale: 390 / 1280 });
+    expect(fitSize({ w: 390, h: 844 }, { w: 1200, h: 900 }).scale).toBe(1);
+  });
+  test("client points map to page pixels; outside the image maps to nothing", () => {
+    expect(clientToPage({ x: 195, y: 122 }, { left: 0, top: 0, width: 390, height: 244 }, { w: 1280, h: 800 })).toEqual({ x: 640, y: 400 });
+    expect(clientToPage({ x: 10, y: 300 }, { left: 0, top: 0, width: 390, height: 244 }, { w: 1280, h: 800 })).toBeNull();
+  });
+});

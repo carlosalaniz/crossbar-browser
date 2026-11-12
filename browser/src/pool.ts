@@ -52,15 +52,26 @@ export interface FrameMeta {
 }
 
 export interface InputEvent {
-  type: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel" | "keyDown" | "keyUp" | "char" | "insertText";
+  type: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel" | "keyDown" | "keyUp" | "char" | "insertText" | "touchStart" | "touchMove" | "touchEnd" | "touchCancel";
   x?: number;
   y?: number;
+  deltaX?: number;
   deltaY?: number;
-  button?: "left" | "right" | "none";
+  button?: "left" | "right" | "middle" | "none";
+  buttons?: number;
+  clickCount?: number;
+  modifiers?: number;
+  touchPoints?: Array<{ x: number; y: number; id: number }>;
   key?: string;
   code?: string;
   text?: string;
 }
+
+/** What has focus in the page after a person's input, so the phone can open the right keyboard. */
+export type FocusKind = "text" | "password" | "otp" | "frame" | "none";
+
+/** Keys without text need their virtual key code, or Chrome doesn't run the default action (delete, move, submit). */
+const KEY_CODES: Record<string, number> = { Backspace: 8, Tab: 9, Enter: 13, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
 
 export interface Tab {
   readonly id: string;
@@ -90,6 +101,8 @@ export interface Tab {
   onClose(cb: () => void): () => void;
   /** Takeover input, from a person. Not an agent tool. */
   input(ev: InputEvent): Promise<void>;
+  /** What has focus now (takeover only), so the viewer can offer the right keyboard. */
+  focusKind(): Promise<FocusKind>;
   screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string>;
   close(): Promise<void>;
 }
@@ -550,15 +563,58 @@ class CdpTab implements Tab {
         return;
       case "keyDown":
       case "keyUp":
-      case "char":
-        await this.cdp.send("Input.dispatchKeyEvent", { type: ev.type, key: ev.key, code: ev.code, text: ev.type === "keyUp" ? undefined : ev.text }, this.session);
+      case "char": {
+        const vk = ev.key ? KEY_CODES[ev.key] : undefined;
+        const text = ev.type === "keyUp" ? undefined : ev.text || undefined;
+        await this.cdp.send(
+          "Input.dispatchKeyEvent",
+          { type: ev.type === "keyDown" && !text ? "rawKeyDown" : ev.type, key: ev.key, code: ev.code, text, unmodifiedText: text, modifiers: ev.modifiers ?? 0, ...(vk ? { windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk } : {}) },
+          this.session,
+        );
         return;
+      }
       case "mouseWheel":
-        await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x ?? 0, y: ev.y ?? 0, deltaX: 0, deltaY: ev.deltaY ?? 0 }, this.session);
+        await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: ev.x ?? 0, y: ev.y ?? 0, deltaX: ev.deltaX ?? 0, deltaY: ev.deltaY ?? 0, modifiers: ev.modifiers ?? 0 }, this.session);
+        return;
+      case "touchStart":
+      case "touchMove":
+      case "touchEnd":
+      case "touchCancel":
+        // Real touch sequences for sites in the mobile profile (ADR 0015).
+        await this.cdp.send("Input.dispatchTouchEvent", { type: ev.type, touchPoints: (ev.touchPoints ?? []).map((p) => ({ x: p.x, y: p.y, id: p.id, radiusX: 8, radiusY: 8, force: 1 })), modifiers: ev.modifiers ?? 0 }, this.session);
         return;
       default:
-        await this.cdp.send("Input.dispatchMouseEvent", { type: ev.type, x: ev.x ?? 0, y: ev.y ?? 0, button: ev.button ?? "left", clickCount: ev.type === "mouseMoved" ? 0 : 1 }, this.session);
+        await this.cdp.send(
+          "Input.dispatchMouseEvent",
+          {
+            type: ev.type,
+            x: ev.x ?? 0,
+            y: ev.y ?? 0,
+            button: ev.type === "mouseMoved" ? (ev.buttons ? "left" : "none") : (ev.button ?? "left"),
+            buttons: ev.buttons ?? (ev.type === "mousePressed" ? 1 : 0),
+            clickCount: ev.type === "mouseMoved" ? 0 : (ev.clickCount ?? 1),
+            modifiers: ev.modifiers ?? 0,
+          },
+          this.session,
+        );
     }
+  }
+
+  async focusKind(): Promise<FocusKind> {
+    const k = await this.b.scripts
+      .inspect<FocusKind>(
+        this.session,
+        `(() => { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+          if (!a || a === document.body) return 'none';
+          if (a.isContentEditable || a.tagName === 'TEXTAREA') return 'text';
+          if (a.tagName === 'IFRAME' || a.tagName === 'FRAME') return 'frame';
+          if (a.tagName !== 'INPUT') return 'none';
+          if (a.type === 'password') return 'password';
+          if ((a.autocomplete || '').includes('one-time-code')) return 'otp';
+          return ['text', 'email', 'search', 'tel', 'url', 'number', ''].includes(a.type) ? 'text' : 'none'; })()`,
+      )
+      .catch(() => "none" as const);
+    return k;
   }
 
   async screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string> {

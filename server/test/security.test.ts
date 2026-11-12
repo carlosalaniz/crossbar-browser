@@ -288,6 +288,35 @@ describe("server security rules", () => {
     assert.match(String((n.init.headers as Record<string, string>).Title), /claude-desktop/);
   });
 
+  test("notifications: page-made writes don't push; one agent's burst merges into one follow-up (ADR 0019)", async () => {
+    await t.close();
+    t = await startTestApp();
+    t.services.db.prepare("INSERT INTO settings (user_id, key, value) VALUES ('alice', 'ntfyUrl', 'https://ntfy.example/topic')").run();
+    const pool = t.pool as FakePool;
+    pool.pages.set("https://forum.example/t/1", { onClick: { e7: { method: "POST", url: "https://forum.example/api/comment", resourceType: "XHR", postData: "text=hello+there" } } });
+    const c = await t.mcpClient(t.token("alice", "act", "claude"));
+    await c.call("open", { url: "https://forum.example/t/1" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    // The page by itself: a ticket in Requests, no push.
+    tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: "a=1" });
+    await sleep(30);
+    assert.ok(t.services.tickets.listOpen("alice").some((x) => (x.facts as { path?: string }).path === "/api/track"));
+    assert.equal(t.sent.length, 0, "a page-made write pushed a notification");
+    // The agent's click: one clear push.
+    await c.call("type", { ref: "e6", text: "hello there" });
+    await c.call("click", { ref: "e7" });
+    await sleep(30);
+    assert.equal(t.sent.length, 1);
+    const h = t.sent[0]!.init.headers as Record<string, string>;
+    assert.equal(h.Title, "claude wants to post a comment on forum.example");
+    assert.match(String(t.sent[0]!.init.body), /Approve: it goes through\. Deny: claude is told no\./);
+    // More asks from the same agent right away: merged, not pushed one by one.
+    await c.call("set_site", { pattern: "x.com", level: "act_as_you" });
+    await c.call("set_site", { pattern: "y.com", level: "act_as_you" });
+    await sleep(30);
+    assert.equal(t.sent.length, 1);
+  });
+
   test("inline deny from a notification needs a valid signed link and only denies", async () => {
     const c = await t.mcpClient(t.token("alice", "act"));
     const r = await c.call("set_site", { pattern: "x.com", level: "act_as_you" });

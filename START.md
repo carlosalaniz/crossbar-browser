@@ -22,6 +22,8 @@ Stage 2 follows `docs/build-plan-stage-2.md` (goal: no bot-detection triggers, a
 - **WebSockets stay blocked** (ADR 0020, owner's decision 12 Nov 2026): no allowance and no fake sockets; apps that need them (chat, real-time editors, live trading) stay for a person.
 - **Proposed ADRs 0021–0023** (owner review): permission prompts (S28), stock features (S29), agent popups (S30).
 
+- **Follow-up (owner, 12 Nov 2026): an agent runner that resumes agents.** Live: after `ask_person` the agent (DeepSeek V4 Flash) ended its turn and waited for the person to say "done" instead of calling `wait_for_ticket`. MCP only answers calls; Crossbar can't wake an agent, so any agent that stops mid-task stays stopped. Build a runner that owns the agent loop: a task record (goal, open ticket, last state), and when a ticket resolves (or an agent stops without finishing) it re-invokes the agent with "ticket X resolved, continue: <goal>". Needs an ADR (where it runs, which models and keys, how it reports to the person, limits on retries and cost). Until then, the person tells the agent to continue.
+
 **Next (in order):** owner review of ADRs 0021–0023, then implement the accepted ones; takeover over WebSocket with a per-connection rate limit (ADR 0016); challenge-vendor read allowances from saved fixtures (S19/S20); 5-minute challenge reminder (ADR 0019); container baseline snapshot of `/pages/diag` committed under `docs/`; a cap on concurrent browsers if households grow.
 
 ## Status (11 Nov 2026, end of first build session)

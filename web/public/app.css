@@ -130,3 +130,34 @@ form.stack { display: flex; flex-direction: column; gap: 8px; }
 .tk-hint.gone { opacity: 0; }
 @media (pointer: coarse) { .tk-view { align-items: flex-start; } }
 @media (pointer: fine) { .tk-actions .tk-btn:first-child { display: none; } }
+
+/* ---------- layout v2: phone tabs, desktop sidebar ---------- */
+.tabs .nav-brand, .tabs .nav-settings { display: none; }
+.tabs a { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tabs .ico { font-size: 18px; line-height: 1; }
+.btn.big { min-height: 52px; font-size: 17px; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-row .btn { flex: 1 1 0; min-width: 120px; }
+/* Phone: the decision stays in reach of a thumb, above the tab bar. */
+.decision { position: sticky; bottom: calc(60px + env(safe-area-inset-bottom)); z-index: 1; background: var(--bg); padding: 10px 0 4px; box-shadow: 0 -12px 12px -12px rgba(0,0,0,.25); }
+.decision .btns { display: flex; flex-direction: column; gap: 8px; }
+.ticket-grid, .ticket-main, .ticket-side { display: flex; flex-direction: column; gap: 12px; }
+@media (min-width: 900px) {
+  .shell { max-width: none; margin: 0; display: grid; grid-template-columns: 232px 1fr; grid-template-rows: auto auto 1fr; min-height: 100dvh; }
+  .shell > .top { grid-column: 2; position: sticky; }
+  .shell > .top .brand { display: none; }
+  .shell > .warn-banner { grid-column: 2; }
+  .shell > .content { grid-column: 2; width: 100%; max-width: 1120px; padding: 24px 32px 48px; }
+  .tabs { position: sticky; top: 0; grid-column: 1; grid-row: 1 / span 3; height: 100dvh; flex-direction: column; justify-content: flex-start; gap: 2px; padding: 16px 12px; border-top: 0; border-right: 1px solid var(--line); }
+  .tabs a { flex: 0 0 auto; max-width: none; flex-direction: row; gap: 12px; padding: 10px 12px; border-radius: 8px; font-size: 15px; text-align: left; }
+  .tabs a:hover { background: var(--accent-bg); }
+  .tabs a.on { background: var(--accent-bg); }
+  .tabs .ico { width: 20px; text-align: center; }
+  .tabs .nav-brand { display: flex; font-weight: 700; color: var(--ink); margin-bottom: 16px; font-size: 17px; }
+  .tabs .nav-brand:hover { background: none; }
+  .tabs .nav-settings { display: flex; margin-top: auto; }
+  .ticket-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, 1fr); gap: 32px; align-items: start; }
+  .decision { position: static; box-shadow: none; padding: 0; }
+  .crop { max-height: none; }
+}
+.tabs .nav-brand.on { background: none; }

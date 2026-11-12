@@ -129,11 +129,13 @@ function shell(title: string, ...content: Child[]): HTMLElement {
       ? h(
           "nav",
           { class: "tabs", "aria-label": "Sections" },
-          h("a", { href: "#/" }, "Inbox"),
-          h("a", { href: "#/live" }, "Live"),
-          h("a", { href: "#/sites" }, "Sites"),
-          h("a", { href: "#/connect" }, "Agents"),
-          h("a", { href: "#/activity" }, "Activity"),
+          h("a", { class: "nav-brand", href: "#/" }, h("img", { src: "/assets/icon.svg", alt: "", width: "24", height: "24" }), "Crossbar"),
+          h("a", { href: "#/" }, h("span", { class: "ico", "aria-hidden": "true" }, "✋"), "Inbox"),
+          h("a", { href: "#/live" }, h("span", { class: "ico", "aria-hidden": "true" }, "◉"), "Live"),
+          h("a", { href: "#/sites" }, h("span", { class: "ico", "aria-hidden": "true" }, "◎"), "Sites"),
+          h("a", { href: "#/connect" }, h("span", { class: "ico", "aria-hidden": "true" }, "⌘"), "Agents"),
+          h("a", { href: "#/activity" }, h("span", { class: "ico", "aria-hidden": "true" }, "≡"), "Activity"),
+          h("a", { class: "nav-settings", href: "#/settings" }, h("span", { class: "ico", "aria-hidden": "true" }, "⚙"), "Settings"),
         )
       : null,
   );
@@ -315,26 +317,43 @@ async function ticketScreen(id: string) {
         : h(
             "div",
             { class: "btns" },
-            t.scopes.map((s, i) => act(SCOPE_LABEL[s]?.(t) ?? s, i === 0 ? "primary" : "", () => api("POST", `/api/tickets/${id}/approve`, { scope: s === "apply" ? "once" : s }))),
-            act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
+            // One big Approve with the default scope (ADR 0019); the other scopes and Deny beside it.
+            t.scopes.slice(0, 1).map((s) => act(SCOPE_LABEL[s]?.(t) ?? s, "primary big", () => api("POST", `/api/tickets/${id}/approve`, { scope: s === "apply" ? "once" : s }))),
+            h(
+              "div",
+              { class: "btn-row" },
+              t.scopes.slice(1).map((s) => act(SCOPE_LABEL[s]?.(t) ?? s, "", () => api("POST", `/api/tickets/${id}/approve`, { scope: s === "apply" ? "once" : s }))),
+              act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
+            ),
           );
   const f = t.facts as { origin?: string; url?: string; from?: Record<string, unknown>; to?: Record<string, unknown>; kind?: string; evidence?: string[]; passwordFieldOrigins?: string[] };
   const foreignPw = t.kind === "challenge" ? (f.passwordFieldOrigins ?? []).filter((o) => o !== f.origin) : [];
   render(
     shell(
       t.kind === "challenge" ? "Needs you" : t.kind === "proposal" ? "Proposal" : "Approval",
-      h("div", { class: "origin" }, h("span", { class: "dot", "aria-hidden": "true" }), originOf(f.origin ?? f.url ?? String(t.facts.pattern ?? ""))),
-      h("h2", {}, headline(t)),
-      h("p", { class: "muted small" }, final ? t.state : timeLeft(t.expiresAt)),
-      t.hasScreenshot ? h("img", { class: "crop", src: `/api/tickets/${id}/screenshot`, alt: "What the page looked like when the request was held" }) : null,
+      h(
+        "div",
+        { class: "ticket-grid" },
+        h(
+          "div",
+          { class: "ticket-main" },
+          h("div", { class: "origin" }, h("span", { class: "dot", "aria-hidden": "true" }), originOf(f.origin ?? f.url ?? String(t.facts.pattern ?? ""))),
+          h("h2", {}, headline(t)),
+          h("p", { class: "muted small" }, final ? t.state : timeLeft(t.expiresAt)),
+          t.hasScreenshot ? h("img", { class: "crop", src: `/api/tickets/${id}/screenshot`, alt: "What the page looked like when the request was held" }) : null,
+        ),
+        h(
+          "div",
+          { class: "ticket-side" },
       t.kind === "proposal"
         ? h("dl", { class: "facts" }, Object.keys(f.to ?? {}).filter((k) => k !== "pattern" && (f.to as Record<string, unknown>)[k] !== undefined).map((k) => [h("dt", {}, k), h("dd", {}, `${String(f.from?.[k] ?? "–")} → `, h("strong", {}, String((f.to as Record<string, unknown>)[k])))]))
         : t.kind === "challenge"
           ? h("div", {}, foreignPw.length ? h("p", { class: "banner danger" }, `The password field on this page belongs to ${foreignPw.join(", ")}, not ${f.origin}. Make sure that's who you mean to log in to.`) : null, h("p", {}, f.kind === "verification" ? "Your bank wants to confirm this payment. Do it on your phone; the agent is paused while you're in control." : f.kind === "login" ? "Log in on your phone. Your password manager can fill the field; the agent sees nothing while you're in control." : "Solve it on your phone. The agent is paused while you're in control."), h("details", {}, h("summary", { class: "small muted" }, "Evidence"), h("ul", { class: "small" }, (f.evidence ?? []).map((e) => h("li", {}, e)))))
           : factsTable(t),
-      t.agentSays ? h("blockquote", { class: "claim" }, h("span", { class: "small muted" }, "Agent says (unverified): "), `“${t.agentSays.text}”`) : null,
-      decision,
-      err,
+          t.agentSays ? h("blockquote", { class: "claim" }, h("span", { class: "small muted" }, "Agent says (unverified): "), `“${t.agentSays.text}”`) : null,
+          h("div", { class: "decision" }, decision, err),
+        ),
+      ),
     ),
   );
   // Buttons are disabled for 1 s after they appear (no accidental taps).

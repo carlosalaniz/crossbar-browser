@@ -1,0 +1,11 @@
+{
+  "name": "Crossbar",
+  "short_name": "Crossbar",
+  "description": "Your browser, lent to your agents, with you in the loop.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#2d4bc8",
+  "icons": [{ "src": "/assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

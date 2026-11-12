@@ -121,7 +121,8 @@ describe("web app flow", { skip: skipReason }, () => {
     await ev(`location.hash = '#/'`);
     await until(hasText("claude-code wants to send data"));
     await ev(`location.hash = '#/tickets/${clicked.ticket.id}'`);
-    await until(hasText("typed by the agent"));
+    await until(hasText("typed by claude-code"));
+    assert.match(String(await ev("document.body.innerText")), /Right after claude-code clicked “Post”/);
     assert.equal(site.hits.filter((h) => h.method === "POST").length, 0);
     await sleep(1100); // buttons are disabled for 1 s
     await clickText("Allow for this task");

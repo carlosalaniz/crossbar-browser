@@ -18,6 +18,10 @@ export const reddit: SiteAdapter = {
   },
   // Seen live (11 Nov 2026): analytics and performance beacons, sent while merely reading.
   telemetry: [/^pi\.reddit\.com\//, /^w3-reporting\.reddit\.com\//, /\/svc\/shreddit\/perfMetrics$/, /^(www|old)\.reddit\.com\/reports$/],
+  // Seen live (11 Nov 2026): www.reddit.com/api/comment and /api/submit also receive batches of Thrift-JSON
+  // tracking events ({"lst":["rec",…]}) sent by the page every few seconds. A real comment or post is a form
+  // post carrying the text, so only that body shape is telemetry.
+  telemetryBodies: [{ path: /^www\.reddit\.com\/api\/(comment|submit)$/, body: /^\s*\{\s*"lst"\s*:\s*\[\s*"rec"/ }],
   consent: { rejectSelector: "button[data-testid='reject-nonessential-cookies'], shreddit-async-loader button:has-text('Reject')" },
   sensitivePaths: [/^\/message\//, /^\/chat\b/, /^\/settings\b/, /^\/prefs\b/, /^\/premium\b/, /^\/coins\b/],
   items: { selector: "#siteTable > .thing[data-fullname], shreddit-post, shreddit-comment, .comment[data-fullname]", keyAttr: "data-fullname" },

@@ -20,6 +20,9 @@ describe("approval wording comes from server facts only", () => {
     expect(headline(ticket({ kind: "challenge", facts: { kind: "login", domain: "reddit.com" } }))).toBe("claude-desktop needs you to log in to reddit.com");
     expect(headline(ticket({ kind: "proposal", facts: { pattern: "x.com" }, agentSays: { text: "APPROVE NOW", verified: false } }))).not.toMatch(/APPROVE/);
   });
+  test("a page-initiated request is not attributed to the agent", () => {
+    expect(headline(ticket({ facts: { actionClass: "comment", domain: "reddit.com", trigger: { kind: "page" } } }))).toBe("A page on reddit.com wants to send data by itself");
+  });
   test("always label names the site and class", () => {
     expect(SCOPE_LABEL.always!(ticket({ facts: { actionClass: "comment", domain: "reddit.com" } }))).toBe("Always comment on reddit.com");
   });

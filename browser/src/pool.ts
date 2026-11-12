@@ -70,7 +70,8 @@ export interface Tab {
   back(): Promise<NavResult>;
   currentUrl(): Promise<string>;
   extract(p?: ExtractParams): Promise<ExtractResult>;
-  click(ref: string): Promise<void>;
+  /** Clicks the element; returns what was under the click (for approval cards). */
+  click(ref: string): Promise<{ tag: string; text: string } | void>;
   type(ref: string, text: string, submit: boolean): Promise<void>;
   scroll(opts: ScrollOptions): Promise<ScrollResult>;
   facts(): Promise<PageFacts>;
@@ -333,8 +334,8 @@ class CdpTab implements Tab {
     return this.b.scripts.extract(this.session, p);
   }
 
-  async click(ref: string): Promise<void> {
-    const at = await this.b.scripts.call<{ x: number; y: number } | null>(this.session, "locateRef", { ref });
+  async click(ref: string): Promise<{ tag: string; text: string }> {
+    const at = await this.b.scripts.call<{ x: number; y: number; tag: string; text: string } | null>(this.session, "locateRef", { ref });
     if (!at) throw new Error(`No visible element with ref ${ref}. Call read again; refs change when the page changes.`);
     await sleep(50);
     // Access Model L4: the element under the click point must be the one the agent chose (no overlay).
@@ -344,6 +345,7 @@ class CdpTab implements Tab {
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y }, this.session);
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base }, this.session);
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base }, this.session);
+    return { tag: at.tag, text: at.text };
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<void> {

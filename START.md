@@ -18,8 +18,11 @@ Read this, then `AGENTS.md`, at the start of a new build session. It records whe
   - Short or paraphrased leaks in subresource URLs after taint still pass (see the threat model).
   - The first commit on `main` carries a Claude co-author trailer; removing it needs a force-push the owner has to allow.
 - **Next:**
-  - real Reddit fixtures via a manual refresh script;
+  - real Reddit fixtures via the manual refresh script (`scripts/refresh-fixtures.ts`, headful; Reddit currently challenges this IP);
   - accuracy and prompt-rate measurements against real sessions.
+- **Later (owner's TODO, not now):**
+  - **Rules as data, not TypeScript.** Site adapters (`adapters/<site>/site.ts`) and block signatures (`detect/src/index.ts`) are TypeScript today. Every new site or wall means a code change and a release, and we'll keep hitting more of them. Move the rule engine to a declarative format with a schema: read operations, telemetry, sensitive paths, read hosts, item selectors, signatures. Load and validate it at runtime, so rules can grow and be updated without touching code. Think about regex safety (no catastrophic backtracking), versioning, tests per rule file, and signing if rules are ever fetched remotely. Needs an ADR when started.
+  - **Site scope per agent token** (proposed, not decided): limit a token to a list of sites (domain groups count as one site), everything else refused for that token. Only tightens; widening is human-only.
 - Design sources:
   - Charter: https://claude.ai/artifact/WBcaHfYYPBjRNq2zX4qQfL (read with the Artifact tool, `action: read`)
   - Access Model: https://claude.ai/artifact/JrJrT21wE7F5TXJbHNEzq1

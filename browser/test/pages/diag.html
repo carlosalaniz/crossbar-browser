@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!--
+  Diagnostic page (docs/automation-signal-plan.md, PR B): what a site can see about this browser.
+  Local only: served by the test site (http://testsite.test:8090/pages/diag in the dev stack, /pages/diag in
+  tests). Records non-secret environment values, DOM changes Crossbar didn't make, calls to hooked
+  page-world getters, input event shapes and timing, visibility and focus. Never sends anything anywhere.
+  Agents can read it with the read tool; tests read #diag as JSON.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crossbar diagnostics</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #f3f4f6; padding: 12px; border-radius: 8px; }
+  .flag { color: #b42318; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Crossbar diagnostics</h1>
+<p>What this page can observe about the browser. <span id="summary"></span></p>
+<p><input id="probe-input" placeholder="Type here to record key events"> <button id="probe-button">Click to record a press</button></p>
+<pre id="diag">collecting…</pre>
+<script>
+(() => {
+  const own = new WeakSet();
+  const d = {
+    automation: {}, identity: {}, screen: {}, locale: {}, graphics: {}, hardware: {}, permissions: {},
+    dom: { foreignMutations: 0, foreignAttributes: [], foreignStyles: 0 },
+    hooks: { titleReads: 0, querySelectorCalls: 0 },
+    input: { mousemove: 0, mousedown: 0, keydown: 0, wheel: 0, touch: 0, untrusted: 0, lastPressMs: null, movesBeforePress: null },
+    visibility: { state: document.visibilityState, focused: document.hasFocus(), changes: 0 },
+    network: {},
+  };
+
+  // ---- page-world hooks: does anything outside this page read through them? ----
+  const titleDesc = Object.getOwnPropertyDescriptor(Document.prototype, "title");
+  let selfCalls = 0;
+  Object.defineProperty(Document.prototype, "title", { configurable: true, get() { if (!selfCalls) d.hooks.titleReads++; return titleDesc.get.call(this); }, set(v) { titleDesc.set.call(this, v); } });
+  const qsa = Document.prototype.querySelectorAll;
+  Document.prototype.querySelectorAll = function (...a) { if (!selfCalls) d.hooks.querySelectorCalls++; return qsa.apply(this, a); };
+  const mine = (fn) => { selfCalls++; try { return fn(); } finally { selfCalls--; } };
+
+  // ---- DOM changes this page didn't make ----
+  // Started once parsing is done, so the parser's own appends don't count.
+  const observe = () => new MutationObserver((list) => {
+    for (const m of list) {
+      if (own.has(m.target)) continue;
+      d.dom.foreignMutations++;
+      if (m.type === "attributes" && d.dom.foreignAttributes.length < 20) d.dom.foreignAttributes.push(m.attributeName);
+      for (const n of m.addedNodes) if (n.nodeName === "STYLE") d.dom.foreignStyles++;
+    }
+  }).observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", observe); else observe();
+
+  // ---- input ----
+  let downAt = 0;
+  const count = (k) => (e) => { d.input[k]++; if (!e.isTrusted) d.input.untrusted++; };
+  addEventListener("mousemove", count("mousemove"));
+  addEventListener("keydown", count("keydown"));
+  addEventListener("wheel", count("wheel"), { passive: true });
+  addEventListener("touchstart", count("touch"), { passive: true });
+  addEventListener("mousedown", (e) => { count("mousedown")(e); downAt = performance.now(); d.input.movesBeforePress = d.input.mousemove; });
+  addEventListener("mouseup", () => { if (downAt) d.input.lastPressMs = Math.round(performance.now() - downAt); });
+  document.addEventListener("visibilitychange", () => { d.visibility.changes++; d.visibility.state = document.visibilityState; });
+  addEventListener("focus", () => (d.visibility.focused = true));
+  addEventListener("blur", () => (d.visibility.focused = false));
+
+  // ---- environment ----
+  const n = navigator;
+  d.automation = { webdriver: n.webdriver, headlessUA: /Headless/.test(n.userAgent), pluginCount: n.plugins?.length ?? null, pdfViewer: n.pdfViewerEnabled ?? null };
+  d.identity = { userAgent: n.userAgent, platform: n.platform, brands: n.userAgentData?.brands?.map((b) => `${b.brand} ${b.version}`) ?? null, mobile: n.userAgentData?.mobile ?? null, uaPlatform: n.userAgentData?.platform ?? null };
+  n.userAgentData?.getHighEntropyValues?.(["architecture", "bitness", "model", "platformVersion", "fullVersionList"]).then((v) => (d.identity.highEntropy = v)).catch(() => {});
+  d.screen = { screen: `${screen.width}x${screen.height}`, avail: `${screen.availWidth}x${screen.availHeight}`, outer: `${outerWidth}x${outerHeight}`, inner: `${innerWidth}x${innerHeight}`, dpr: devicePixelRatio, colorDepth: screen.colorDepth, maxTouchPoints: n.maxTouchPoints };
+  const ro = Intl.DateTimeFormat().resolvedOptions();
+  d.locale = { timeZone: ro.timeZone, locale: ro.locale, languages: [...(n.languages ?? [])], offsetMinutes: new Date().getTimezoneOffset() };
+  d.hardware = { cores: n.hardwareConcurrency, memoryGB: n.deviceMemory ?? null };
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    if (gl) {
+      const x = gl.getExtension("WEBGL_debug_renderer_info");
+      d.graphics = { webgl: true, vendor: x ? gl.getParameter(x.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR), renderer: x ? gl.getParameter(x.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER), maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE), extensions: gl.getSupportedExtensions()?.length ?? 0 };
+    } else d.graphics = { webgl: false };
+  } catch (e) { d.graphics = { webgl: false, error: String(e) }; }
+  for (const name of ["notifications", "geolocation", "camera", "microphone"]) {
+    n.permissions?.query({ name }).then((s) => (d.permissions[name] = s.state)).catch(() => (d.permissions[name] = "unsupported"));
+  }
+  d.network.serviceWorker = "serviceWorker" in n;
+  try {
+    const ws = new WebSocket(`ws://${location.host}/__diag_ws`);
+    ws.onerror = () => (d.network.webSocket = "failed");
+    ws.onopen = () => { d.network.webSocket = "open"; ws.close(); };
+  } catch { d.network.webSocket = "threw"; }
+
+  // ---- report ----
+  const out = document.getElementById("diag");
+  const summary = document.getElementById("summary");
+  own.add(out); own.add(summary);
+  const render = () => mine(() => {
+    d.visibility.focused = document.hasFocus();
+    const flags = [];
+    if (d.automation.webdriver) flags.push("navigator.webdriver is true");
+    if (d.automation.headlessUA) flags.push("headless user agent");
+    if (d.dom.foreignMutations) flags.push(`${d.dom.foreignMutations} DOM changes this page didn't make`);
+    if (d.hooks.titleReads || d.hooks.querySelectorCalls) flags.push("page-world getters were called from outside");
+    if (d.input.untrusted) flags.push(`${d.input.untrusted} untrusted input events`);
+    d.flags = flags;
+    out.textContent = JSON.stringify(d, null, 2);
+    summary.textContent = flags.length ? `Flags: ${flags.join("; ")}.` : "No automation flags seen.";
+    summary.className = flags.length ? "flag" : "";
+  });
+  render();
+  setInterval(render, 500);
+})();
+</script>
+</body>
+</html>

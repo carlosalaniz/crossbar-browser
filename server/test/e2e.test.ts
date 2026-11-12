@@ -159,6 +159,24 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     }
   });
 
+  test("diagnostic page: no automation flags after an agent reads, types and clicks (signal plan B)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/diag") });
+    const links = ((await c.call("read", { mode: "content+links" })).data as { links: Array<{ ref: string; kind: string; text: string }> }).links;
+    await c.call("type", { ref: links.find((l) => l.kind === "input")!.ref, text: "hello" });
+    await c.call("click", { ref: links.find((l) => /record a press/.test(l.text))!.ref });
+    await sleep(700);
+    const content = ((await c.call("read")).data as { content: string }).content;
+    const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
+    const d = JSON.parse(json) as { automation: { webdriver: boolean }; dom: { foreignMutations: number }; hooks: { titleReads: number; querySelectorCalls: number }; input: { untrusted: number; keydown: number; movesBeforePress: number; lastPressMs: number }; flags: string[] };
+    assert.deepEqual(d.flags, [], JSON.stringify(d));
+    assert.equal(d.automation.webdriver, false);
+    assert.equal(d.dom.foreignMutations, 0);
+    assert.equal(d.hooks.titleReads + d.hooks.querySelectorCalls, 0);
+    assert.equal(d.input.keydown, 5);
+    assert.ok(d.input.movesBeforePress >= 3 && d.input.lastPressMs >= 40, JSON.stringify(d.input));
+  });
+
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/flair") });

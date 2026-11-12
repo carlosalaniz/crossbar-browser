@@ -45,4 +45,4 @@ fi
 
 # Switching to a non-root user clears every capability; no-new-privs stops setuid binaries regaining any.
 exec setpriv --reuid=crossbar --regid=crossbar --init-groups --inh-caps=-all --no-new-privs \
-  xvfb-run -a --server-args="-screen 0 1280x1024x24 -nolisten tcp" node browser/src/host.ts
+  xvfb-run -a --server-args="-screen 0 1920x1080x24 -nolisten tcp" node browser/src/host.ts

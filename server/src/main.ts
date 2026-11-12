@@ -46,7 +46,8 @@ const launcher = env.CROSSBAR_BROWSER_URL
   : localLauncher({
       dataDir,
       proxyServer: env.CROSSBAR_PROXY,
-      headless: env.CROSSBAR_HEADLESS !== "0",
+      // Headful unless asked: headless announces itself to sites (audit S14).
+      headless: env.CROSSBAR_HEADLESS === "1",
       hostResolverRules: env.CROSSBAR_HOST_RESOLVER_RULES,
       extraArgs: env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : [],
     });

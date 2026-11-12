@@ -38,6 +38,9 @@ services:
       CROSSBAR_PROXY: http://proxy:3128
       CROSSBAR_BROWSER_SECRET: ${CROSSBAR_BROWSER_SECRET:?set CROSSBAR_BROWSER_SECRET in deploy/.env}
       CROSSBAR_CHROME_ARGS: ${CROSSBAR_CHROME_ARGS:-}
+      # Your time zone and language, so pages see the same as on your own devices (npm run dev copies the host's).
+      TZ: ${CROSSBAR_TZ:-UTC}
+      CROSSBAR_LANG: ${CROSSBAR_LANG:-en-US}
     shm_size: 1gb
     # Chromium's sandbox needs user, PID and network namespaces, which Docker's default seccomp
     # profile forbids. This profile is Docker's default plus exactly clone/unshare/setns.

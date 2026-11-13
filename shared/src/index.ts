@@ -105,7 +105,7 @@ export const TOOLS = {
   click: def({
     name: "click",
     description:
-      "Click an element: by ref from read or find (preferred), or by what it says (its text or label, e.g. an icon button's \"Settings\"). If you don't know where a control is, call find first. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
+      "Click an element: by ref from read or find (preferred), or by what it says (its text or label, e.g. an icon button's \"Settings\"). If you don't know where a control is, call find first. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked. When it sends something that was already approved, the result lists it under sent.",
     input: z
       .object({
         ref: z.string().regex(/^e\d+$/).optional().describe("Element ref from read or find, e.g. e12."),

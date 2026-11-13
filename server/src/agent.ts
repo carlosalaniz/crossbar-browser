@@ -5,7 +5,7 @@ import type { BrowserPool, Profile, Tab, TabPolicy } from "@crossbar/browser/poo
 import type { GateRequest, HeldRequest, Decision } from "@crossbar/browser/gate";
 import type { AdBlocker } from "@crossbar/browser/adblock";
 import { detect, type BlockState } from "@crossbar/detect";
-import { matchReadOperation, adapterFor, isTelemetry } from "@crossbar/adapters";
+import { matchReadOperation, adapterFor, isTelemetry, sameDomainGroup } from "@crossbar/adapters";
 import type { TokenInfo } from "./tokens.ts";
 import type { Sites } from "./sites.ts";
 import { registrable, hostOf, CATEGORIES } from "./sites.ts";
@@ -75,6 +75,17 @@ export function isSensitive(url: string): boolean {
   if (SENSITIVE_PATH.test(path + "/")) return true;
   return !!adapterFor(url)?.sensitivePaths?.some((re) => re.test(path));
 }
+
+/** Rules for requests a page sends on its own account, not as the agent's action. */
+const PAGE_OWN_RULES = new Set(["page_background", "after_open_click", "telemetry", "cors_preflight", "read_list", "captcha_widget", "human_takeover", "local_scheme"]);
+
+const pathOf = (url: string): string => {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "";
+  }
+};
 
 /** Classify a held request's consequence from what the browser observed (never from button labels). */
 export function classify(method: string, url: string, body?: string, operation?: string | null): ActionClass {
@@ -157,6 +168,8 @@ export class AgentSession {
   private readonly lastAction = new Map<string, { tool: "click" | "type"; ref: string; label: string; at: number; intent: "open" | "act" }>();
   private readonly pending = new Map<string, PendingHold>();
   private readonly newHolds: string[] = [];
+  /** Writes the gate let through as the agent's (by a grant or the site's level), so click can say what it sent. */
+  private readonly sentWrites: Array<{ tabId: string; at: number; what: string }> = [];
   private pageDomain = new Map<Profile, string>();
   paused = false;
   /** Walls a person dismissed as false alarms in this session: kind + origin + path. */
@@ -322,7 +335,7 @@ export class AgentSession {
         // refuse it when a value overlaps signed-in text or has a smuggling shape (Access Model real-time checks).
         // The exact address of an image or link the read showed is the page's own: fetching it carries nothing
         // new (live: Gmail's theme thumbnails on gstatic.com were refused after reading the theme dialog).
-        if (this.tainted && !this.usedBeforeTaint.has(domain) && domain !== registrable(pageDomain ?? "") && !this.readUrls.has(r.url)) {
+        if (this.tainted && !this.usedBeforeTaint.has(domain) && !sameDomainGroup(domain, registrable(pageDomain ?? "")) && !this.readUrls.has(r.url)) {
           const why = this.smuggling(r.url);
           if (why) {
             this.flag(domain, `a page request carried ${why} after a signed-in read`, "gate_shape");
@@ -512,6 +525,10 @@ export class AgentSession {
     if (!isNav && !nonGet && !newWithData && verdict === "allow") {
       this.s.activity.count(this.userId, this.id, domain);
       return;
+    }
+    if (nonGet && verdict === "allow" && rule && !PAGE_OWN_RULES.has(rule)) {
+      this.sentWrites.push({ tabId: tab.id, at: Date.now(), what: `${r.method} ${hostOf(r.url)}${pathOf(r.url)}${rule.startsWith("grant:") ? " (approved earlier)" : ""}` });
+      if (this.sentWrites.length > 50) this.sentWrites.shift();
     }
     const values = extractValues(r.url, r.postData);
     const overlap = this.tainted ? Math.max(0, ...values.map((v) => this.readIndex.overlap(v.value))) : 0;
@@ -787,6 +804,7 @@ export class AgentSession {
   /** After click/type: wait briefly for held requests or a navigation, then report. */
   private async settle(tab: Tab, before: string): Promise<ToolResult> {
     const start = this.newHolds.length;
+    const since = Date.now();
     const deadline = Date.now() + this.s.settleMs;
     while (Date.now() < deadline && this.newHolds.length === start) await new Promise((r) => setTimeout(r, 50));
     if (this.newHolds.length > start) {
@@ -806,7 +824,9 @@ export class AgentSession {
       const block = await this.checkBlock(tab);
       if (block) return this.challenge(block, tab, url);
     }
-    return ok({ url, navigated: url !== before });
+    // What the action sent as the person, so the agent needn't check the activity log to know it took.
+    const sent = [...new Set(this.sentWrites.filter((w) => w.tabId === tab.id && w.at >= since).map((w) => w.what))].slice(0, 5);
+    return ok({ url, navigated: url !== before, ...(sent.length ? { sent } : {}) });
   }
 
   /** Fallback: click what a person would, by its visible text; the normal click and its checks follow. */

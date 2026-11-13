@@ -42,6 +42,7 @@ export function describeTicket(t: Ticket): { title: string; body: string } {
     if (f.vendor === "agent") return { title: `${agent} needs you on ${domain}`, body: "Tap to take control. Its reason is on the request page." };
     return { title: `${domain} is blocking ${agent}`, body: "Tap to take a look." };
   }
+  if (t.kind === "proposal" && f.type === "clear_browser_data") return { title: `${agent} asks to clear all browser data`, body: "Approve: every site in Crossbar is signed out and its data deleted. Deny: nothing changes." };
   if (t.kind === "proposal") return { title: `${agent} asks for more access on ${String(f.pattern ?? domain)}`, body: "Approve: the change applies. Deny: nothing changes." };
   if ((f.trigger as { kind?: string } | undefined)?.kind === "page") {
     return { title: `A page on ${domain} wants to send data`, body: `Not after a click by ${agent}. Usually analytics; deny if unsure.` };

@@ -271,6 +271,23 @@ describe("server security rules", () => {
     assert.equal(post("https://www.reddit.com/v2/assist:compose").rule, "page_before_agent_acted");
   });
 
+  test("clearing browser data: an agent only proposes it; a person approves or does it from Settings", async () => {
+    const read = await t.mcpClient(t.token("alice", "read"));
+    assert.equal((await read.call("clear_browser_data", {})).state, "denied");
+    const c = await t.mcpClient(t.token("alice", "act", "cleaner"));
+    const r = await c.call("clear_browser_data", { reason: "start fresh" });
+    assert.equal(r.state, "pending_approval");
+    assert.deepEqual(pool.cleared, [], "cleared before a person approved");
+    // No token can approve its own request.
+    assert.notEqual((await t.api("POST", `/api/tickets/${r.ticket!.id}/approve`, { token: t.token("alice", "act"), body: {} })).status, 200);
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/approve`, { user: "alice", body: {} });
+    assert.deepEqual(pool.cleared, ["alice"]);
+    // From Settings: a person, directly.
+    assert.equal((await t.api("POST", "/api/browser-data/clear", { user: "alice" })).status, 200);
+    assert.deepEqual(pool.cleared, ["alice", "alice"]);
+    assert.equal((await t.api("POST", "/api/browser-data/clear", { token: t.token("alice", "act") })).status, 401);
+  });
+
   test("activity records data shapes, not values; agents see only their own rows", async () => {
     pool.pages.set("https://forum.example/", { onClick: { e1: { method: "POST", url: "https://forum.example/api/comment?draft=1", resourceType: "XHR", postData: JSON.stringify({ text: "my secret reply", n: 3 }) } } });
     const tokA = t.token("alice", "act", "agent-a");

@@ -6,7 +6,7 @@ import type { Launcher } from "./pool.ts";
 
 export function remoteLauncher(baseUrl: string, secret: string): Launcher {
   const base = baseUrl.replace(/\/$/, "");
-  return async (userId, profile) => {
+  const launch: Launcher = async (userId, profile) => {
     const r = await fetch(`${base}/launch`, { method: "POST", headers: { "content-type": "application/json", "x-crossbar-secret": secret }, body: JSON.stringify({ userId, profile }) });
     if (!r.ok) throw new Error(`browser host refused launch: ${r.status} ${await r.text()}`);
     const { id } = (await r.json()) as { id: string };
@@ -20,4 +20,9 @@ export function remoteLauncher(baseUrl: string, secret: string): Launcher {
       },
     };
   };
+  launch.wipe = async (userId, profile) => {
+    const r = await fetch(`${base}/wipe`, { method: "POST", headers: { "content-type": "application/json", "x-crossbar-secret": secret }, body: JSON.stringify({ userId, profile }) });
+    if (!r.ok) throw new Error(`browser host couldn't clear ${profile}: ${r.status} ${await r.text()}`);
+  };
+  return launch;
 }

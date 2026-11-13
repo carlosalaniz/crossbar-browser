@@ -187,7 +187,11 @@ export class FakePool implements BrowserPool {
     this.tabs.push(t);
     return t;
   }
+  readonly cleared: string[] = [];
   async closeUser() {}
+  async clearData(userId: string) {
+    this.cleared.push(userId);
+  }
   async close() {}
 }
 

@@ -163,10 +163,22 @@ async function dispatch(s: Services, a: AgentSession, name: ToolName, args: Reco
       return { state: "ok", data: s.grants.list(userId, a.token.id) };
     case "revoke_grant":
       return s.grants.revoke(String(args.id), userId) ? { state: "ok", data: { revoked: args.id } } : { state: "error", message: "No such grant." };
+    case "clear_browser_data": {
+      // Signs the person out of every site and can't be undone: a person decides, never the agent alone.
+      const t = s.tickets.create({ userId, tokenId: a.token.id, agentName: a.token.agentName, kind: "proposal", dedupeKey: "clear_browser_data", agentReason: String(args.reason ?? ""), facts: { type: "clear_browser_data" } });
+      s.notifier.ticket(t);
+      return { state: "pending_approval", ticket: { id: t.id, kind: t.kind, expiresAt: t.expiresAt }, summary: "Proposed: clear all browser data (every site signed out).", hint: "A person has to approve this. Call wait_for_ticket; once approved, the browser starts empty." };
+    }
     case "panic":
       await panic(s, userId, `agent:${a.token.agentName}`, String(args.reason ?? ""));
       return { state: "ok", data: { panicked: true, next: "Everything is stopped. Only a person can resume, in the web app." } };
   }
+}
+
+/** Clear all browser data: close the user's agent sessions (their tabs belong to the old profiles), then wipe both profiles. */
+export async function clearBrowserData(s: Services & { closeUserSessions?: (userId: string) => Promise<void> }, userId: string): Promise<void> {
+  await s.closeUserSessions?.(userId);
+  await s.pool.clearData(userId);
 }
 
 /** Panic: suspend every token, drop act and signed-in grants and levels, close sessions. Only tightens. */

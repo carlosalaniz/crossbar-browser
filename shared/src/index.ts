@@ -226,6 +226,14 @@ export const TOOLS = {
     minToken: "read",
     class: "tighten",
   }),
+  clear_browser_data: def({
+    name: "clear_browser_data",
+    description:
+      "Clear all of the user's data in Crossbar's browser: both profiles' cookies, logins, site storage, cache and history. Every site is signed out. A person has to approve it; nothing is cleared until they do. Call wait_for_ticket.",
+    input: z.object({ reason: z.string().max(500).default("").describe("Why. Quoted to the person as unverified.") }),
+    minToken: "act",
+    class: "loosen",
+  }),
 } as const;
 
 export type ToolName = keyof typeof TOOLS;
@@ -325,6 +333,7 @@ export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/api/live/:tab/stream", auth: "session", description: "Server-sent events: frames at up to 15 fps." }),
   r({ method: "POST", path: "/api/panic", auth: "either", description: "Panic. Only tightens." }),
   r({ method: "POST", path: "/api/resume", auth: "session", freshFactor: true, description: "Resume after panic (human only)." }),
+  r({ method: "POST", path: "/api/browser-data/clear", auth: "session", freshFactor: true, description: "Clear all browser data: both profiles' cookies, logins, storage, cache and history (a person; agents propose it)." }),
   r({ method: "GET", path: "/api/settings/notifications", auth: "session", description: "Where notifications go." }),
   r({ method: "PUT", path: "/api/settings/notifications", auth: "session", freshFactor: true, description: "Change where notifications go (human only).", body: NotifyBody }),
   r({ method: "POST", path: "/api/settings/notifications/test", auth: "session", description: "Send a test notification." }),

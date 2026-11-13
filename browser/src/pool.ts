@@ -3,7 +3,7 @@
 // One Chromium per (user, profile). One gate per Chromium; requests are routed to the tab they belong to.
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import type { CdpConnection } from "./cdp.ts";
 import { NetworkGate, type Decision, type GateRequest, type HeldRequest, type Verdict, type Attached } from "./gate.ts";
 import { launchChrome, type LaunchOptions } from "./launch.ts";
@@ -140,18 +140,26 @@ export interface Tab {
 export interface BrowserPool {
   openTab(userId: string, profile: Profile): Promise<Tab>;
   closeUser(userId: string): Promise<void>;
+  /** Stops the user's browsers and deletes both profiles: cookies, logins, storage, cache, history. */
+  clearData(userId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 /** How a pool gets a CDP connection to a Chromium for (user, profile). Local launch or the browser container. */
-export type Launcher = (userId: string, profile: Profile) => Promise<{ cdp: CdpConnection; close(): Promise<void> }>;
+export type Launcher = ((userId: string, profile: Profile) => Promise<{ cdp: CdpConnection; close(): Promise<void> }>) & {
+  /** Deletes a stopped profile's directory, so its next launch starts empty. */
+  wipe?(userId: string, profile: Profile): Promise<void>;
+};
 
 export function localLauncher(opts: { dataDir: string } & Omit<LaunchOptions, "userDataDir">): Launcher {
-  return async (userId, profile) => {
-    const dir = join(opts.dataDir, "profiles", userId.replace(/[^\w-]/g, "_"), profile);
+  const dirOf = (userId: string, profile: Profile) => join(opts.dataDir, "profiles", userId.replace(/[^\w-]/g, "_"), profile);
+  const launch: Launcher = async (userId, profile) => {
+    const dir = dirOf(userId, profile);
     seedPreferences(dir);
     return launchChrome({ ...opts, userDataDir: dir });
   };
+  launch.wipe = async (userId, profile) => rmSync(dirOf(userId, profile), { recursive: true, force: true });
+  return launch;
 }
 
 /** Third-party cookies blocked in both profiles (Access Model L2); Chrome's own password saving off. */
@@ -987,7 +995,11 @@ export class LocalPool implements BrowserPool {
 
   private readonly idle = new Map<string, NodeJS.Timeout>();
 
+  /** Users whose browser data is being cleared: their next tab waits for it. */
+  private readonly clearing = new Map<string, Promise<void>>();
+
   async openTab(userId: string, profile: Profile): Promise<Tab> {
+    await this.clearing.get(userId)?.catch(() => {});
     const key = `${userId}:${profile}`;
     clearTimeout(this.idle.get(key));
     this.idle.delete(key);
@@ -1023,6 +1035,25 @@ export class LocalPool implements BrowserPool {
       const m = await b.catch(() => null);
       m?.gate.stop();
       await m?.closeFn();
+    }
+  }
+
+  async clearData(userId: string): Promise<void> {
+    const wipe = this.launcher.wipe;
+    if (!wipe) throw new Error("This browser can't clear its data.");
+    const run = (async () => {
+      for (const p of ["anon", "personal"] as const) {
+        clearTimeout(this.idle.get(`${userId}:${p}`));
+        this.idle.delete(`${userId}:${p}`);
+      }
+      await this.closeUser(userId);
+      for (const p of ["anon", "personal"] as const) await wipe(userId, p);
+    })();
+    this.clearing.set(userId, run);
+    try {
+      await run;
+    } finally {
+      if (this.clearing.get(userId) === run) this.clearing.delete(userId);
     }
   }
 

@@ -9,7 +9,7 @@ import { ROUTES, TOOLS, ApproveBody, SiteBody, CreateTokenBody, NotifyBody, Take
 import { CATEGORIES, CATEGORY_IDS } from "./sites.ts";
 import type { Tab } from "@crossbar/browser/pool";
 import { AgentSession, type Services } from "./agent.ts";
-import { callTool, mcpTools, openapi, panic, resume } from "./capabilities.ts";
+import { callTool, clearBrowserData, mcpTools, openapi, panic, resume } from "./capabilities.ts";
 import type { Tokens, TokenInfo } from "./tokens.ts";
 import { TicketError, type Ticket } from "./tickets.ts";
 import { getSetting, setSetting } from "./db.ts";
@@ -278,12 +278,16 @@ export function createApp(o: AppOptions) {
       c.res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store" }).end(Buffer.from(jpeg, "base64"));
       return undefined;
     },
-    "POST /api/tickets/:id/approve": (c) => {
+    "POST /api/tickets/:id/approve": async (c) => {
       const t = requireTicket(c);
       const { scope } = c.body as z.infer<typeof ApproveBody>;
       if (t.kind === "challenge") throw new HttpError(400, "Challenges are resolved through takeover.");
       // Approving loosens access: with 2FA on, it needs a fresh check.
       if (c.human!.twoFactor && !c.human!.fresh) throw new HttpError(401, "fresh_factor_required");
+      if (t.kind === "proposal" && (t.facts as { type?: string }).type === "clear_browser_data") {
+        await clearBrowserData(svc, t.userId);
+        return ticketView(s.tickets.approve(t.id, { applied: "clear_browser_data" }));
+      }
       if (t.kind === "proposal") {
         const f = t.facts as { to: { pattern: string; level?: "blocked" | "read" | "read_as_you" | "act_as_you"; adblock?: boolean; device?: "desktop" | "mobile" } };
         s.sites.set(t.userId, f.to, "approval");
@@ -442,6 +446,11 @@ export function createApp(o: AppOptions) {
       const who = c.human ? `person:${c.human.username}` : `agent:${c.token!.agentName}`;
       await panic(svc, (c.human ?? c.token)!.userId, who, "");
       return { panicked: true };
+    },
+    "POST /api/browser-data/clear": async (c) => {
+      if (c.human!.twoFactor && !c.human!.fresh) throw new HttpError(401, "fresh_factor_required");
+      await clearBrowserData(svc, c.human!.userId);
+      return { cleared: true };
     },
     "POST /api/resume": (c) => {
       if (c.human!.twoFactor && !c.human!.fresh) throw new HttpError(401, "fresh_factor_required");

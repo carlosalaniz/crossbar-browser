@@ -398,7 +398,7 @@ async function ticketScreen(id: string) {
               act("Deny", "danger", () => api("POST", `/api/tickets/${id}/deny`)),
             ),
           );
-  const f = t.facts as { origin?: string; url?: string; from?: Record<string, unknown>; to?: Record<string, unknown>; kind?: string; evidence?: string[]; passwordFieldOrigins?: string[] };
+  const f = t.facts as { type?: string; origin?: string; url?: string; from?: Record<string, unknown>; to?: Record<string, unknown>; kind?: string; evidence?: string[]; passwordFieldOrigins?: string[] };
   const foreignPw = t.kind === "challenge" ? (f.passwordFieldOrigins ?? []).filter((o) => o !== f.origin) : [];
   render(
     shell(
@@ -417,7 +417,9 @@ async function ticketScreen(id: string) {
         h(
           "div",
           { class: "ticket-side" },
-      t.kind === "proposal"
+      t.kind === "proposal" && f.type === "clear_browser_data"
+        ? h("p", { class: "banner danger" }, "Approving signs you out of every site in Crossbar and deletes its cookies, saved logins, site data, cache and history, in both profiles. It can't be undone.")
+        : t.kind === "proposal"
         ? h("dl", { class: "facts" }, Object.keys(f.to ?? {}).filter((k) => k !== "pattern" && (f.to as Record<string, unknown>)[k] !== undefined).map((k) => [h("dt", {}, k), h("dd", {}, `${String(f.from?.[k] ?? "–")} → `, h("strong", {}, String((f.to as Record<string, unknown>)[k])))]))
         : t.kind === "challenge"
           ? h("div", {}, foreignPw.length ? h("p", { class: "banner danger" }, `The password field on this page belongs to ${foreignPw.join(", ")}, not ${f.origin}. Make sure that's who you mean to log in to.`) : null, h("p", {}, f.kind === "verification" ? "Your bank wants to confirm this payment. Do it on your phone; the agent is paused while you're in control." : f.kind === "login" ? "Log in on your phone. Your password manager can fill the field; the agent sees nothing while you're in control." : "Solve it on your phone. The agent is paused while you're in control."), h("details", {}, h("summary", { class: "small muted" }, "Evidence"), h("ul", { class: "small" }, (f.evidence ?? []).map((e) => h("li", {}, e)))))
@@ -653,6 +655,17 @@ async function settingsScreen() {
             }
           } }, "Invite")))
         : null,
+      h("h3", {}, "Browser data"),
+      h("p", { class: "muted small" }, "Crossbar's browser keeps your logins, cookies, site data, cache and history in two profiles (signed in and anonymous). Clearing deletes all of it: every site is signed out and the browser starts empty. Tokens, site rules and activity stay."),
+      h("button", { class: "btn danger", onclick: async () => {
+        if (!confirm("Clear all browser data? Every site in Crossbar is signed out, and agents' open pages close. This can't be undone.")) return;
+        try {
+          await withFreshFactor(() => api("POST", "/api/browser-data/clear"));
+          msg.textContent = "Browser data cleared. The browser starts empty next time it's used.";
+        } catch (e) {
+          err.textContent = (e as Error).message;
+        }
+      } }, "Clear all browser data"),
       err,
       h("div", { class: "spacer" }),
       h("button", { class: "btn ghost", onclick: async () => (await api("POST", "/api/logout", {}), (me = null), (location.hash = "#/login")) }, "Log out"),

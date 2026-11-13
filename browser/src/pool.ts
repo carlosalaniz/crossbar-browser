@@ -112,7 +112,7 @@ export interface Tab {
   /** Controls whose name matches, best first, with whether a click can reach them (see page.ts findControls). */
   findControls(query: string, opts?: { role?: string; limit?: number; textFallback?: boolean; within?: string }): Promise<ControlMatch[]>;
   /** Clicks the element; returns what was under the click (for approval cards) and what the click is for (ADR 0030). */
-  click(ref: string): Promise<{ tag: string; text: string; intent?: "open" | "act" } | void>;
+  click(ref: string, onPress?: (el: { text: string; intent: "open" | "act" }) => void): Promise<{ tag: string; text: string; intent?: "open" | "act" } | void>;
   /** Brings the element into sight, inside its scrolling box too. */
   reveal(ref: string): Promise<{ inView: boolean }>;
   /** A JPEG of the element (brought into sight first), or of the visible page; base64. */
@@ -522,7 +522,8 @@ class CdpTab implements Tab {
     this.pointer = { x, y };
   }
 
-  async click(ref: string): Promise<{ tag: string; text: string; intent: "open" | "act" }> {
+  /** `onPress` runs right before the press: what the page sends on mousedown or keydown is already this click's. */
+  async click(ref: string, onPress?: (el: { text: string; intent: "open" | "act" }) => void): Promise<{ tag: string; text: string; intent: "open" | "act" }> {
     type Check = { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true; outside?: true };
     let at = await this.locate(ref);
     let x = 0;
@@ -550,7 +551,7 @@ class CdpTab implements Tab {
     }
     // Past the window's edge where no scroll reaches (Gmail's theme dialog is wider than the narrow window,
     // live 12 Nov 2026): a person would Tab to it and press Enter. Focus it and press Enter.
-    if (!check.ok && check.outside && (await this.pressByKeyboard(ref))) return { tag: at.tag, text: at.text, intent: at.intent };
+    if (!check.ok && check.outside && (await this.pressByKeyboard(ref, () => onPress?.({ text: at.text, intent: at.intent })))) return { tag: at.tag, text: at.text, intent: at.intent };
     if (!check.ok) {
       const c = check.covering;
       if (check.outside) throw new Error(`${ref} is outside the window (the page is wider or taller than the window and doesn't scroll there), and it can't take keyboard focus. Not clicking.`);
@@ -563,6 +564,7 @@ class CdpTab implements Tab {
       );
     }
     const base = { x, y, button: "left" as const, clickCount: 1 };
+    onPress?.({ text: at.text, intent: at.intent });
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 }, this.session);
     await sleep(rand(45, 110));
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 }, this.session);
@@ -570,7 +572,7 @@ class CdpTab implements Tab {
   }
 
   /** Focuses the element without scrolling and presses Enter (Space for checkboxes and switches), with real keys. */
-  private async pressByKeyboard(ref: string): Promise<boolean> {
+  private async pressByKeyboard(ref: string, onPress: () => void): Promise<boolean> {
     const objectId = await this.b.scripts.elementHandle(this.session, ref);
     if (!objectId) return false;
     let how: string | null = null;
@@ -602,6 +604,7 @@ class CdpTab implements Tab {
       how === "space"
         ? { key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: " " }
         : { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: "\r" };
+    onPress();
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key }, this.session);
     await sleep(rand(45, 110));
     const { text: _t, ...up } = key;

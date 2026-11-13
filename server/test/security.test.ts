@@ -581,8 +581,29 @@ describe("taint and subresources", () => {
     assert.equal(tab.simulate({ url: `https://evil2.example/${blob}.png`, resourceType: "Image" }).verdict, "deny");
     // The page's own site isn't an exit.
     assert.equal(tab.simulate({ url: "https://old.reddit.com/api/info?id=the+door+code+for+the+meetup+is+4417", resourceType: "XHR" }).verdict, "allow");
+    // Nor is its domain group: the site's static host serves files with blob-like names (live: Google's
+    // fonts on gstatic.com while Gmail was open, 12 Nov 2026).
+    assert.equal(tab.simulate({ url: `https://www.redditstatic.com/fonts/${blob}.woff2`, resourceType: "Font" }).verdict, "allow");
     const flags = (await c.call("list_flags")).data as unknown as Array<{ domain: string }>;
     assert.ok(flags.some((f) => f.domain === "evil.example"));
+  });
+
+  test("an image the signed-in read showed loads from its exact address; any other address is still refused", async () => {
+    const t = await startTestApp();
+    after(() => t.close());
+    const pool = t.pool as FakePool;
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "read_as_you" }, "user");
+    // Live (Gmail themes, 12 Nov 2026): the read showed the thumbnails' addresses, so loading them matched
+    // "text read while signed in".
+    const img = "https://images.example/themes/featured/the-door-code-for-the-meetup-is-4417.jpg=w190-h117";
+    pool.pages.set("https://old.reddit.com/r/y", { content: `Pick your theme\n\n![](${img})\n\nthe door code for the meetup is 4417` });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://old.reddit.com/r/y" });
+    const tab = [...pool.tabs].reverse().find((x) => x.profile === "personal")!;
+    await c.call("read");
+    assert.equal(tab.simulate({ url: img, resourceType: "Image" }).verdict, "allow");
+    assert.equal(tab.simulate({ url: `${img}&x=1`, resourceType: "Image" }).verdict, "deny");
+    assert.equal(tab.simulate({ url: "https://images.example/p.gif?d=the+door+code+for+the+meetup+is+4417", resourceType: "Image" }).verdict, "deny");
   });
 });
 

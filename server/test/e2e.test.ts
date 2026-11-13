@@ -295,6 +295,44 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.match(String((await c.call("scroll", {})).message), /Give ref .* or until/);
   });
 
+  test("a control past the window's edge is pressed with Enter; one that can't take focus is refused, honestly (live: Gmail themes, 12 Nov 2026)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    assert.equal((await c.call("click", { text: "Wide theme" })).state, "ok");
+    type M = { ref?: string; name: string; state: string };
+    const save = ((await c.call("find", { query: "Save", within: "dialog" })).data as { matches: M[] }).matches[0]!;
+    assert.equal(save.state, "offscreen", JSON.stringify(save));
+    // Save acts as the person: its request is held, and the page saw a real Enter on the button.
+    const saved = await c.call("click", { ref: save.ref });
+    assert.equal(saved.state, "pending_approval", JSON.stringify(saved));
+    assert.match(((await c.call("read")).data as { content: string }).content, /saved wide by enter/);
+    await t.api("POST", `/api/tickets/${saved.ticket!.id}/approve`, { user: "alice", body: { scope: "task" } });
+    // Once approved, the same click goes through and its result says what it sent (live: the agent read the
+    // activity log to learn whether its theme click had been sent).
+    const again = await c.call("click", { ref: save.ref });
+    assert.equal(again.state, "ok", JSON.stringify(again));
+    assert.ok((again.data as { sent?: string[] }).sent?.some((w) => /^POST \S+\/sink \(approved earlier\)$/.test(w)), JSON.stringify(again.data));
+    // A plain div past the edge can't be reached by keyboard either: say where it is, not that it's gone.
+    const restore = await c.call("click", { text: "Restore" });
+    assert.equal(restore.state, "error");
+    assert.match(String(restore.message), /outside the window/);
+    assert.doesNotMatch(String(restore.message), /isn't on the page/);
+  });
+
+  test("a write sent on mousedown is the click's, even long after the previous action (ADR 0027 trigger window)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    const quick = ((await c.call("find", { query: "Quick apply" })).data as { matches: Array<{ ref: string }> }).matches[0]!;
+    // Past the 3-second window: if the action were recorded only after the click returned, the POST sent
+    // during the press would pass as the page's own background request.
+    await sleep(3300);
+    const before = site.hits.filter((h) => h.case === "quick-apply").length;
+    const r = await c.call("click", { ref: quick.ref });
+    assert.equal(r.state, "pending_approval", JSON.stringify(r));
+    assert.equal(site.hits.filter((h) => h.case === "quick-apply").length, before, "the POST left without a person");
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/deny`, { user: "alice" });
+  });
+
   test("open a #route: lands on that route, without waiting for a load that never comes (live: Gmail, 13 Nov 2026)", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/picker") });

@@ -802,9 +802,14 @@ export class AgentSession {
   }
 
   /** After click/type: wait briefly for held requests or a navigation, then report. */
-  private async settle(tab: Tab, before: string): Promise<ToolResult> {
-    const start = this.newHolds.length;
-    const since = Date.now();
+  /** `mark` is taken before the action: a page can send on mousedown or keydown, before the action returns. */
+  private markBefore(): { holds: number; at: number } {
+    return { holds: this.newHolds.length, at: Date.now() };
+  }
+
+  private async settle(tab: Tab, before: string, mark: { holds: number; at: number }): Promise<ToolResult> {
+    const start = mark.holds;
+    const since = mark.at;
     const deadline = Date.now() + this.s.settleMs;
     while (Date.now() < deadline && this.newHolds.length === start) await new Promise((r) => setTimeout(r, 50));
     if (this.newHolds.length > start) {
@@ -878,13 +883,16 @@ export class AgentSession {
     const tab = this.activeTab();
     if (!tab) return { state: "error", message: "No page open." };
     const before = await tab.currentUrl();
+    const startMark = this.markBefore();
     try {
-      const el = await tab.click(ref);
-      this.lastAction.set(tab.id, { tool: "click", ref, label: (el && el.text) || ref, at: Date.now(), intent: (el && el.intent) || "act" });
+      // Recorded right before the press, not after the click returns: a page that sends on mousedown or
+      // keydown would otherwise be judged by the previous action, or as its own background request.
+      const mark = (el?: { text: string; intent?: "open" | "act" } | void) => this.lastAction.set(tab.id, { tool: "click", ref, label: (el && el.text) || ref, at: Date.now(), intent: (el && el.intent) || "act" });
+      mark(await tab.click(ref, mark));
     } catch (e) {
       return { state: "error", message: (e as Error).message };
     }
-    return this.settle(tab, before);
+    return this.settle(tab, before, startMark);
   }
 
   async type(ref: string, text: string, submit: boolean): Promise<ToolResult> {
@@ -893,6 +901,9 @@ export class AgentSession {
     const tab = this.activeTab();
     if (!tab) return { state: "error", message: "No page open." };
     const before = await tab.currentUrl();
+    // Before the keys, as with click: a page can send on any keystroke, and Enter submits on keydown.
+    const startMark = this.markBefore();
+    this.lastAction.set(tab.id, { tool: "type", ref, label: text.slice(0, 80), at: Date.now(), intent: "act" });
     try {
       await tab.type(ref, text, submit);
     } catch (e) {
@@ -902,7 +913,7 @@ export class AgentSession {
     this.typed.push(text);
     this.lastAction.set(tab.id, { tool: "type", ref, label: text.slice(0, 80), at: Date.now(), intent: "act" });
     if (this.typed.length > 50) this.typed.shift();
-    return submit ? this.settle(tab, before) : ok({ typed: text.length });
+    return submit ? this.settle(tab, before, startMark) : ok({ typed: text.length });
   }
 
   async scroll(opts: { until?: { items: number } | { end: true } | { tokens: number }; selector?: string; ref?: string; within?: string }): Promise<ToolResult> {

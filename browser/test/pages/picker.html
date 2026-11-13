@@ -14,6 +14,12 @@
   .grid { height: 200px; overflow-y: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .opt { height: 60px; border-radius: 6px; cursor: pointer; }
   [hidden] { display: none !important; }
+  /* Gmail's theme dialog keeps its desktop width in a narrow window (live, 12 Nov 2026): centred, wider than
+     the window on both sides, fixed, so nothing scrolls to its footer's Save. */
+  .wide { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); width: 300vw; height: 300px; background: #fff; }
+  .wide footer { position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: #f4f4f4; }
+  #wide-save { position: absolute; right: 24px; bottom: 12px; padding: 8px 16px; background: #1a73e8; color: #fff; }
+  #wide-restore { position: absolute; right: 140px; bottom: 12px; padding: 8px 16px; cursor: pointer; }
 </style></head>
 <body>
 <header>
@@ -22,6 +28,9 @@
   <a href="#inbox">Inbox</a>
   <a href="#settings/themes">Themes</a>
   <button id="set-theme" onclick="document.getElementById('picker').hidden = false">Set theme</button>
+  <button id="wide-theme" onclick="document.getElementById('wide').hidden = false">Wide theme</button>
+  <!-- Sends on mousedown, as many apps do: the press itself is the agent's action. -->
+  <button id="quick" onmousedown="fetch('/sink?case=quick-apply', { method: 'POST', body: 'theme=quick' }).catch(() => {})">Quick apply</button>
 </header>
 <main><p>Inbox: 3 conversations</p><p id="log">nothing picked</p><p id="route"></p></main>
 <div id="picker" hidden>
@@ -31,7 +40,21 @@
     <div class="grid" id="grid"></div>
   </div>
 </div>
+<div id="wide" hidden>
+  <div class="wide" role="dialog" aria-label="Wide theme">
+    <div style="padding: 16px">Wide theme</div>
+    <footer>
+      <div id="wide-restore" onclick="document.getElementById('log').textContent = 'restored'">Restore</div>
+      <div id="wide-save" role="button" tabindex="0">Save</div>
+    </footer>
+  </div>
+</div>
 <script>
+  // Gmail's buttons are divs that answer a click and Enter.
+  const wideSave = document.getElementById('wide-save');
+  const saveWide = (how) => { document.getElementById('log').textContent = 'saved wide by ' + how; fetch('/sink?case=wide-save', { method: 'POST', body: 'theme=wide' }).catch(() => {}); };
+  wideSave.addEventListener('click', () => saveWide('click'));
+  wideSave.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.isTrusted) saveWide('enter'); });
   // The app's own sync: a POST right after any click, as Gmail sends.
   function sync(kind) { fetch('/sink?case=' + kind, { method: 'POST', body: 'sync=1' }).catch(() => {}); }
   function openMenu(b) { const m = document.getElementById('menu'); m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); setTimeout(() => sync('menu-sync'), 300); }

@@ -172,7 +172,7 @@ describe("scroll and extract", { skip: skipReason }, () => {
 });
 
 describe("ad blocking", { skip: skipReason }, () => {
-  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner", "a.test##.r1:has-text(Sponsored)"]);
+  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner", "a.test##.r1:has-text(Sponsored)", "||b.test^$script,third-party,redirect=noopjs"]);
   let env: Env;
   let scripts: PageScripts;
   before(async () => {
@@ -181,7 +181,8 @@ describe("ad blocking", { skip: skipReason }, () => {
     const pageUrls = new Map<string, string>();
     env.gate["policy" as never] = ((r: Parameters<typeof holdNonGet>[0]) => {
       if (r.resourceType === "Document" && r.targetType === "page") pageUrls.set(r.sessionId, r.url);
-      if (blocker.shouldBlock(r, pageUrls.get(r.sessionId) ?? r.url)) return { verdict: "deny", rule: "blocked_ad" };
+      const ad = blocker.check(r, pageUrls.get(r.sessionId) ?? r.url);
+      if (ad.block) return { verdict: "deny", rule: "blocked_ad", ...(ad.respond ? { respond: ad.respond } : {}) };
       return holdNonGet(r);
     }) as never;
     scripts = new PageScripts(env.browser.cdp);
@@ -209,6 +210,13 @@ describe("ad blocking", { skip: skipReason }, () => {
     assert.equal(await evaluate(env, s, "document.querySelectorAll('style').length"), styles);
     assert.equal(await evaluate(env, s, "document.getElementById('cb-cosmetic')"), null);
     assert.match(r.content, /Real content/);
+  });
+
+  test("a redirect= rule answers with a stand-in: the page sees its loader load, the real one never runs (live: Ad-Shield)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/pages/adshield"));
+    await sleep(500);
+    assert.equal(await evaluate(env, s, "document.getElementById('log').textContent"), "loaded a stand-in");
+    assert.equal(env.site.hits.filter((h) => h.path.startsWith("/loader.min.js")).length, 0, "the real loader was fetched");
   });
 
   test("extended rules (uBO :has-text) leave sponsored results out of what the agent reads; the live page is untouched (ADR 0034)", async () => {

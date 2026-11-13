@@ -216,6 +216,13 @@ export class AgentSession {
       t = await this.s.pool.openTab(this.userId, profile);
       t.setPolicy(this.policyFor(t));
       this.tabs[profile] = t;
+      // A tab that goes away (the page closed itself, a crash took it, Chrome exited) is dropped, so the
+      // next open starts a fresh one instead of talking to a dead tab.
+      const opened = t;
+      opened.onClose(() => {
+        if (this.tabs[profile] === opened) delete this.tabs[profile];
+        this.pageDomain.delete(profile);
+      });
     }
     return t;
   }
@@ -282,6 +289,11 @@ export class AgentSession {
     for (const t of Object.values(this.tabs)) await t?.close().catch(() => {});
   }
 
+  /** What the pages did that the agent should know (dialogs answered, crashes, file pickers, sign-in boxes). */
+  drainNotes(): string[] {
+    return Object.values(this.tabs).flatMap((t) => t?.takeNotes() ?? []);
+  }
+
   /**
    * The task is done: close this session's pages (their windows). What the session read (taint, the read
    * index) stays until the session ends: clearing it here would let a misled agent read, finish, then send.
@@ -335,7 +347,8 @@ export class AgentSession {
     // While a person has control, the page loads as in their own browser: blocking a site's fraud or
     // challenge scripts during a login is how logins fail (audit S22).
     if (this.s.adblock && pageSite.adblock && !this.takeoverTabs.has(tab.id) && !(r.resourceType === "Document" && r.sessionId === r.rootSessionId)) {
-      if (this.s.adblock.shouldBlock(r, pageDomain ? `https://${pageDomain}/` : r.url)) return { verdict: "deny", rule: "blocked_ad" };
+      const ad = this.s.adblock.check(r, pageDomain ? `https://${pageDomain}/` : r.url);
+      if (ad.block) return { verdict: "deny", rule: "blocked_ad", ...(ad.respond ? { respond: ad.respond } : {}) };
     }
     if (this.takeoverTabs.has(tab.id)) {
       // A person driving the tab may use sites blocked for agents by default (sign-in providers are for

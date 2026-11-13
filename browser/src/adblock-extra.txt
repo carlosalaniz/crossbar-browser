@@ -5,8 +5,10 @@
 ! Ad-Shield "ad recovery": when blocking is detected it re-inserts the ads through its own servers and
 ! rotates to the next domain when one is blocked. uBO's lists name it per site only; live on
 ! solsticeforum.com (13 Nov 2026) it moved from html-load.com to content-loader.com.
-||html-load.com^$third-party
-||content-loader.com^$third-party
-||css-load.com^$third-party
-||img-load.com^$third-party
-||ad-shield.cc^$third-party
+! Blocking its loader outright breaks the page: Ad-Shield then blanks it and opens a confirm dialog (live,
+! solsticeforum.com, 13 Nov 2026). So, as uBO does per site, its requests get harmless stand-ins.
+||html-load.com^$third-party,redirect=noopjs
+||content-loader.com^$third-party,redirect=noopjs
+||css-load.com^$third-party,redirect=noopcss
+||img-load.com^$third-party,redirect=1x1.gif
+||ad-shield.cc^$third-party,redirect=noopjs

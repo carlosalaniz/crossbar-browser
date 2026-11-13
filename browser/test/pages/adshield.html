@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Ad-Shield's pattern (live, solsticeforum.com): a loader from another site; if it fails to load, the page
+     breaks itself and asks a question. A blocked loader must look loaded (uBO's redirect=noopjs). -->
+<html><head><meta charset="utf-8"><title>Loader</title></head>
+<body>
+<p id="log">waiting</p>
+<script>
+  const s = document.createElement('script');
+  s.src = location.protocol + '//b.test:' + location.port + '/loader.min.js';
+  s.onload = () => { document.getElementById('log').textContent = window.__adshield ? 'loaded the real loader' : 'loaded a stand-in'; };
+  s.onerror = () => { document.getElementById('log').textContent = 'loader failed: page broken'; };
+  document.head.appendChild(s);
+</script>
+</body></html>

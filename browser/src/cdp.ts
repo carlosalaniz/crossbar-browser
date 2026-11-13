@@ -28,6 +28,12 @@ export class CdpConnection {
   private readonly handlers = new Map<string, Set<Handler<EventName>>>();
   private closed = false;
   private readonly ws: WebSocket;
+  private readonly closeCbs = new Set<() => void>();
+  /**
+   * No command waits forever: a page frozen by a busy script (or anything else that stops Chrome answering)
+   * becomes an error the agent can act on, not a hang nobody is there to notice.
+   */
+  static commandTimeoutMs = 60_000;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
@@ -36,6 +42,7 @@ export class CdpConnection {
       this.closed = true;
       for (const p of this.pending.values()) p.reject(new Error(`CDP socket closed during ${p.method}`));
       this.pending.clear();
+      for (const cb of this.closeCbs) cb();
     });
   }
 
@@ -53,9 +60,25 @@ export class CdpConnection {
     const msg: Record<string, unknown> = { id, method, params: params ?? {} };
     if (sessionId) msg.sessionId = sessionId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { method, resolve: resolve as (v: unknown) => void, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`Chrome didn't answer ${method} within ${Math.round(CdpConnection.commandTimeoutMs / 1000)} s: the page may be frozen.`));
+      }, CdpConnection.commandTimeoutMs);
+      timer.unref?.();
+      const done = <T>(f: (v: T) => void) => (v: T) => {
+        clearTimeout(timer);
+        f(v);
+      };
+      this.pending.set(id, { method, resolve: done(resolve as (v: unknown) => void), reject: done(reject) });
       this.ws.send(JSON.stringify(msg));
     });
+  }
+
+  /** Runs when the connection to Chrome ends (Chrome exited or crashed). */
+  onClose(cb: () => void): () => void {
+    if (this.closed) cb();
+    this.closeCbs.add(cb);
+    return () => this.closeCbs.delete(cb);
   }
 
   on<E extends EventName>(event: E, handler: Handler<E>): () => void {

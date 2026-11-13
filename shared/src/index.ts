@@ -282,7 +282,9 @@ export const InviteBody = z.object({ username: z.string().min(1).max(64), passwo
 export const TotpEnableBody = z.object({ secret: z.string(), code: z.string() });
 export const PasswordBody = z.object({ current: z.string(), next: z.string().min(10).max(256) });
 export const TakeoverInput = z.object({
-  type: z.enum(["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel", "keyDown", "keyUp", "char", "insertText", "touchStart", "touchMove", "touchEnd", "touchCancel"]),
+  type: z.enum(["mousePressed", "mouseReleased", "mouseMoved", "mouseWheel", "keyDown", "keyUp", "char", "insertText", "touchStart", "touchMove", "touchEnd", "touchCancel", "dialog"]),
+  /** dialog: the person's answer to the page's dialog, OK (true) or Cancel (false); text for a prompt. */
+  accept: z.boolean().optional(),
   /** The tab this event was aimed at. If control moved to another tab meanwhile, the event is refused, never replayed there (ADR 0016). */
   tab: z.string().max(64).optional(),
   x: z.number().optional(),

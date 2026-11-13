@@ -173,8 +173,18 @@ export class FakeTab implements Tab {
   onPopup() {
     return () => {};
   }
-  onClose() {
-    return () => {};
+  readonly closeCbs = new Set<() => void>();
+  onClose(cb: () => void) {
+    this.closeCbs.add(cb);
+    return () => this.closeCbs.delete(cb);
+  }
+  /** Test hook: the tab went away (the page closed itself, a crash, Chrome exited). */
+  gone() {
+    for (const cb of this.closeCbs) cb();
+  }
+  readonly notes: string[] = [];
+  takeNotes() {
+    return this.notes.splice(0);
   }
   async close() {}
 }

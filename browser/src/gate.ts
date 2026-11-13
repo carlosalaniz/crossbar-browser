@@ -30,6 +30,8 @@ export interface Decision {
   verdict: Verdict;
   /** Which rule decided, for the activity log (e.g. "read_list", "blocked_ad", "taint"). */
   rule?: string;
+  /** With deny: answer with this stand-in instead of failing the request (an ad blocker's redirect=). */
+  respond?: { contentType: string; bodyBase64: string };
 }
 export type GatePolicy = (r: GateRequest) => Verdict | Decision;
 
@@ -50,6 +52,8 @@ export interface NetworkGateOptions {
   onHeld?: (h: HeldRequest) => void;
   onRequest?: (r: GateRequest, v: Verdict, rule?: string) => void;
   onAttach?: (t: Attached) => void;
+  /** A server or proxy asked for HTTP sign-in; the gate cancelled it (no one is there to answer Chrome's box). */
+  onAuth?: (rootSessionId: string, url: string) => void;
   /** Bypass service workers for page requests (Network.setBypassServiceWorker). */
   bypassServiceWorker?: boolean;
 }
@@ -109,6 +113,12 @@ export class NetworkGate {
         this.attached.delete(p.sessionId);
       }),
       this.cdp.on("Fetch.requestPaused", (p, sessionId) => void this.onPaused(p, sessionId!)),
+      // HTTP sign-in (401/407): Chrome's own login box would wait for a person forever. Cancel it; the page
+      // gets the site's error page and the agent is told.
+      this.cdp.on("Fetch.authRequired", (p, sessionId) => {
+        void this.cdp.send("Fetch.continueWithAuth", { requestId: p.requestId, authChallengeResponse: { response: "CancelAuth" } }, sessionId).catch(() => {});
+        this.opts.onAuth?.(this.rootOf(sessionId!), p.request.url);
+      }),
     );
     // Browser-level auto-attach covers top-level targets: pages, service workers, shared workers.
     await this.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
@@ -150,7 +160,7 @@ export class NetworkGate {
       }
     };
     // Order matters: Fetch first, then recurse into children, then let the target run.
-    const fetchOn = await step("Fetch.enable", () => this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, sessionId));
+    const fetchOn = await step("Fetch.enable", () => this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }], handleAuthRequests: true }, sessionId));
     // Dedicated workers have no Fetch domain; the spike showed their requests pause on the parent's session.
     if (!fetchOn && !FETCH_FROM_PARENT.has(t.type)) {
       // Fail closed: a target we can't gate never runs.
@@ -182,10 +192,11 @@ export class NetworkGate {
     };
     let verdict: Verdict;
     let rule: string | undefined;
+    let respond: Decision["respond"];
     try {
       const d = this.policy(r);
       if (typeof d === "string") verdict = d;
-      else ({ verdict, rule } = d);
+      else ({ verdict, rule, respond } = d);
     } catch {
       verdict = "deny"; // a policy bug fails closed
       rule = "policy_error";
@@ -196,6 +207,12 @@ export class NetworkGate {
     const cont = () => this.cdp.send("Fetch.continueRequest", { requestId: r.requestId }, sessionId).catch(() => {});
     const fail = () => this.cdp.send("Fetch.failRequest", { requestId: r.requestId, errorReason: "BlockedByClient" }, sessionId).catch(() => {});
     if (verdict === "allow") return void (await cont());
+    if (verdict === "deny" && respond) {
+      await this.cdp
+        .send("Fetch.fulfillRequest", { requestId: r.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: respond.contentType }, { name: "Access-Control-Allow-Origin", value: "*" }, { name: "Cache-Control", value: "no-store" }], body: respond.bodyBase64 }, sessionId)
+        .catch(() => fail());
+      return;
+    }
     if (verdict === "deny") return void (await fail());
 
     const key = `${sessionId}:${r.requestId}`;

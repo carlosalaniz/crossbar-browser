@@ -80,10 +80,25 @@ export class AdBlocker {
 
   /** Whether the gate should block this request as an ad or tracker. Top-level documents are never blocked. */
   shouldBlock(r: GateRequest, sourceUrl: string): boolean {
-    if (r.resourceType === "Document" && r.targetType === "page") return false;
+    return this.check(r, sourceUrl).block;
+  }
+
+  /**
+   * Block, and with what to answer: a rule with redirect= (uBO's noopjs, 1x1.gif...) gets a harmless stand-in
+   * instead of an error, so a page that checks its script loaded doesn't break (live: Ad-Shield blanked
+   * solsticeforum.com and opened a dialog when its loader failed).
+   */
+  check(r: GateRequest, sourceUrl: string): { block: boolean; respond?: { contentType: string; bodyBase64: string } } {
+    if (r.resourceType === "Document" && r.targetType === "page") return { block: false };
     const type = r.resourceType === "Document" ? "sub_frame" : (TYPE_MAP[r.resourceType] ?? "other");
-    const { match } = this.engine.match(Request.fromRawDetails({ url: r.url, sourceUrl, type: type as never }));
-    return match;
+    const { match, redirect } = this.engine.match(Request.fromRawDetails({ url: r.url, sourceUrl, type: type as never }));
+    if (!match) return { block: false };
+    if (!redirect || r.resourceType === "Document") return { block: true };
+    const comma = redirect.dataUrl.indexOf(",");
+    const bodyBase64 = comma >= 0 ? redirect.dataUrl.slice(comma + 1) : "";
+    // A stylesheet must be served as CSS, a script as JavaScript, or Chrome refuses the stand-in itself.
+    const contentType = r.resourceType === "Stylesheet" ? "text/css" : r.resourceType === "Script" ? "application/javascript" : redirect.contentType.replace(/;base64$/, "");
+    return { block: true, respond: { contentType, bodyBase64 } };
   }
 
   /** CSS that hides ad elements on this page. */

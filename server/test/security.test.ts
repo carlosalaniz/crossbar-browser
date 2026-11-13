@@ -324,6 +324,16 @@ describe("server security rules", () => {
     assert.equal((await t.api("POST", "/api/browser-data/clear", { token: t.token("alice", "act") })).status, 401);
   });
 
+  test("a tab that goes away (the page closed itself, a crash, Chrome exited) is replaced on the next open", async () => {
+    pool.pages.set("https://a.example/", { content: "a" });
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: "https://a.example/" });
+    const first = lastTab("anon");
+    first.gone();
+    assert.equal((await c.call("open", { url: "https://a.example/" })).state, "ok");
+    assert.notEqual(lastTab("anon"), first);
+  });
+
   test("activity records data shapes, not values; agents see only their own rows", async () => {
     pool.pages.set("https://forum.example/", { onClick: { e1: { method: "POST", url: "https://forum.example/api/comment?draft=1", resourceType: "XHR", postData: JSON.stringify({ text: "my secret reply", n: 3 }) } } });
     const tokA = t.token("alice", "act", "agent-a");
@@ -485,7 +495,7 @@ describe("challenges (ADR 0001)", () => {
   });
 
   test("ad blocking pauses while a person has control (audit S22)", async () => {
-    const adblock = { shouldBlock: (r: { url: string }) => r.url.includes("/ads/"), cosmeticCss: () => "", extendedSelectors: () => [] } as never;
+    const adblock = { check: (r: { url: string }) => ({ block: r.url.includes("/ads/") }), cosmeticCss: () => "", extendedSelectors: () => [] } as never;
     const t = await startTestApp({ adblock });
     const pool = t.pool as FakePool;
     pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });

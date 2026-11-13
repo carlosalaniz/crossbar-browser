@@ -269,7 +269,14 @@ function markdownOf(root: HTMLElement, url: string): string {
   const node = root as HTMLElement & { replace?: () => HTMLElement };
   node.replace = () => root;
   try {
-    const md = createMarkdownContent(node as unknown as string, url);
+    // When Turndown throws, the converter's own error path calls .substring on its input, a node here, and
+    // throws again (live: reading all of Gmail, 12 Nov 2026). Either way the text is still there.
+    let md: string;
+    try {
+      md = createMarkdownContent(node as unknown as string, url);
+    } catch {
+      return plainText(root);
+    }
     return CONVERSION_FAILED.test(md) ? plainText(root) : md;
   } finally {
     delete node.replace;

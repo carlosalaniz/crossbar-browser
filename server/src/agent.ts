@@ -149,6 +149,8 @@ export class AgentSession {
   private readonly used = new Set<string>();
   private usedBeforeTaint = new Set<string>();
   readonly readIndex = new ReadTextIndex();
+  /** Addresses a signed-in read showed (images and links in its markdown): the page itself refers to them. */
+  private readonly readUrls = new Set<string>();
   private readonly typed: string[] = [];
   /** The agent's last action per tab, to tell the person whether a held request followed it. */
   /** The agent's last click or typing per tab, and what a click was for (ADR 0030: open only shows, act may do). */
@@ -318,7 +320,9 @@ export class AgentSession {
         // After a signed-in read, a subresource (image, script, beacon-by-GET) to a domain the session hadn't
         // used before can't be held without breaking pages, but it can't be allowed to carry what was read:
         // refuse it when a value overlaps signed-in text or has a smuggling shape (Access Model real-time checks).
-        if (this.tainted && !this.usedBeforeTaint.has(domain) && domain !== registrable(pageDomain ?? "")) {
+        // The exact address of an image or link the read showed is the page's own: fetching it carries nothing
+        // new (live: Gmail's theme thumbnails on gstatic.com were refused after reading the theme dialog).
+        if (this.tainted && !this.usedBeforeTaint.has(domain) && domain !== registrable(pageDomain ?? "") && !this.readUrls.has(r.url)) {
           const why = this.smuggling(r.url);
           if (why) {
             this.flag(domain, `a page request carried ${why} after a signed-in read`, "gate_shape");
@@ -759,6 +763,7 @@ export class AgentSession {
       this.usedBeforeTaint = new Set(this.used);
     }
     this.readIndex.add(text);
+    for (const m of text.matchAll(/\]\((https?:\/\/[^\s)]+)\)/g)) if (this.readUrls.size < 5000) this.readUrls.add(m[1]!);
   }
 
   async read(mode: "content" | "content+links", maxChars: number, within?: string): Promise<ToolResult> {

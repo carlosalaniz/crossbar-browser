@@ -93,9 +93,12 @@ export const TOOLS = {
   read: def({
     name: "read",
     description:
-      "Read the current page as markdown. Interactive elements carry refs like [e12] that click and type accept. mode content+links also lists every visible link and button with its ref and page region. To read one part (an open dialog, a panel), pass within: its ref, or \"dialog\".",
+      "Read the current page as text. Start here on every page. Default (auto): the page as markdown, a map of its sections on long pages, and the controls the markdown left out. Refs like [e12] are what click and type take; a ref with no text of its own shows its name and state, e.g. [e10: Collapse credit cards (expanded)]. If you can't tell what something belongs to (a balance without its account, a button without a label), read again with mode outline: every control with its name and state, plus the page's sections, without the body text. To read one part (an open dialog, a panel), pass within: its ref, or \"dialog\".",
     input: z.object({
-      mode: z.enum(["content", "content+links"]).default("content").describe("content: markdown only. content+links: also the links pass."),
+      mode: z
+        .enum(["auto", "content", "outline", "content+links"])
+        .default("auto")
+        .describe("auto (default): markdown plus a section map and the controls it left out. content: the markdown only. outline: sections and every control with name and state, no body text; best for apps (dashboards, settings, mail). content+links: markdown plus a structured list of links and buttons."),
       maxChars: z.number().int().min(500).max(200000).default(40000).describe("Truncate content to this many characters."),
       within: Area.optional().describe('Read only this part of the page: an element ref (e.g. a dialog\'s, from find) or "dialog" for the open dialog.'),
     }),
@@ -164,8 +167,8 @@ export const TOOLS = {
   look: def({
     name: "look",
     description:
-      "See an element (or the visible page) as a picture: a JPEG screenshot. For what text doesn't say: picture options (themes, avatars), charts, a layout that looks wrong. Prefer read and find; use this when they leave you guessing.",
-    input: z.object({ ref: Ref.optional().describe("The element to look at, brought into view first. Leave out for the visible page.") }),
+      "Screenshot: the whole visible browser window (no ref), or one element (ref), as a JPEG image. Only useful if you can see images. For what text doesn't say: picture options (themes, avatars), charts, which value sits next to which label, a layout that looks wrong. Try read (and read with mode outline) first; then this.",
+    input: z.object({ ref: Ref.optional().describe("The element to look at, brought into view first. Leave out for the whole visible window.") }),
     minToken: "read",
     class: "read",
   }),

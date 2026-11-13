@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- A bank dashboard like Chase's (live, 12 Nov 2026), made up: account tiles are web components with open
+     shadow roots; a tile's card name is only in its aria-label and its card picture's label, not in its text;
+     the "Credit cards" section collapses with an icon-only chevron. Markdown alone showed the balances with no
+     card names, and the chevron as a bare [e10] the agent clicked five times. -->
+<html><head><meta charset="utf-8"><title>Accounts</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  section { padding: 16px; }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .chev { width: 28px; height: 28px; border: 0; background: #ddd; border-radius: 50%; }
+  acct-tile { display: block; margin: 8px 0; }
+  [hidden] { display: none !important; }
+</style></head>
+<body>
+<main>
+  <h1>Good evening</h1>
+  <section>
+    <div class="head"><h2>Credit cards</h2><button class="chev" id="chev" aria-label="Collapse credit cards" aria-expanded="true" onclick="toggle(this)"><svg width="12" height="12"><path d="M0 4l6 6 6-6"/></svg></button></div>
+    <div id="cards">
+      <acct-tile role="group" aria-label="Orbit Rewards Visa (...4410)" data-balance="$1,203.17" data-label="Current balance"></acct-tile>
+      <acct-tile role="group" aria-label="Harbor Cash Mastercard (...9921)" data-balance="$58.40" data-label="Current balance"></acct-tile>
+      <acct-tile role="group" aria-label="Meadow Travel Card (...0077)" data-balance="$0.00" data-label="Current balance"></acct-tile>
+    </div>
+  </section>
+  <section><h2>Checking</h2><p>Everyday Checking (...3300): $2,400.00 available</p></section>
+</main>
+<p id="log">nothing paid</p>
+<script>
+  function toggle(b) { const c = document.getElementById('cards'); c.hidden = !c.hidden; b.setAttribute('aria-expanded', String(!c.hidden)); b.setAttribute('aria-label', c.hidden ? 'Expand credit cards' : 'Collapse credit cards'); }
+  customElements.define('acct-tile', class extends HTMLElement {
+    connectedCallback() {
+      const r = this.attachShadow({ mode: 'open' });
+      const name = this.getAttribute('aria-label');
+      r.innerHTML = '<div style="display:flex;gap:12px"><div role="img" aria-label="' + name.split(' (')[0] + ' card art" style="width:48px;height:30px;background:#36c"></div>' +
+        '<div><div>' + this.getAttribute('data-label') + '</div><div><slot name="extra"></slot></div><strong>' + this.getAttribute('data-balance') + '</strong></div>' +
+        '<button type="button">Pay card</button></div>';
+      r.querySelector('button').onclick = () => { document.getElementById('log').textContent = 'pay: ' + name; };
+    }
+  });
+</script>
+</body></html>

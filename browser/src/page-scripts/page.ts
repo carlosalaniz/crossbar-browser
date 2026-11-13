@@ -15,6 +15,12 @@ const createMarkdownContent = (mod.createMarkdownContent ?? (inner as { createMa
 
 export interface ExtractParams {
   includeLinks?: boolean;
+  /**
+   * auto (hybrid): the markdown, a heading map on top when the page has several sections, and the controls the
+   * markdown left out, each with its name and state. content: the markdown only. outline: the heading map and
+   * every control, no body text (for app pages: dashboards, settings, mail).
+   */
+  mode?: "auto" | "content" | "outline";
   /** Read only this element (a dialog, a panel), by ref; the whole page if absent. */
   within?: string;
   /** Below this many words from Defuddle, fall back to converting the whole visible page. */
@@ -28,6 +34,8 @@ export interface LinkItem {
   ref: string;
   kind: "link" | "button" | "input" | "select" | "textarea" | "option" | "clickable";
   text: string;
+  /** expanded, collapsed, checked, selected, disabled... */
+  state?: string;
   href?: string;
   region: string;
 }
@@ -132,9 +140,28 @@ function isVisible(el: Element): boolean {
   return true;
 }
 
-/** Gives every visible interactive element a stable ref. Existing refs are kept. */
+/** querySelectorAll that also looks inside open shadow roots (web components: live, Chase's account tiles). */
+function deepQueryAll(root: ParentNode, selector: string, limit = MAX_SCAN): Element[] {
+  const out: Element[] = [...root.querySelectorAll(selector)];
+  const hosts: ParentNode[] = [root];
+  let seen = 0;
+  while (hosts.length && seen < limit) {
+    const r = hosts.shift()!;
+    for (const el of r.querySelectorAll("*")) {
+      if (++seen > limit) break;
+      const sr = (el as HTMLElement).shadowRoot;
+      if (sr) {
+        out.push(...sr.querySelectorAll(selector));
+        hosts.push(sr);
+      }
+    }
+  }
+  return out;
+}
+
+/** Gives every visible interactive element a stable ref, inside open shadow roots too. Existing refs are kept. */
 export function tagRefs(root: ParentNode = document): void {
-  for (const el of root.querySelectorAll(INTERACTIVE)) {
+  for (const el of deepQueryAll(root, INTERACTIVE)) {
     if (!hasRef(el) && isVisible(el)) refFor(el);
   }
   // What a person sees as clickable: the pointer cursor starts on this element (not inherited from a
@@ -162,24 +189,63 @@ export function cloneVisible(node: Node): Node | null {
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
   if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") return null;
+  if (tag === "slot") {
+    // What's rendered in a slot: the light-DOM nodes assigned to it, else its fallback content.
+    const span = el.ownerDocument.createElement("span");
+    const assigned = (el as HTMLSlotElement).assignedNodes({ flatten: true });
+    for (const n of assigned.length ? assigned : [...el.childNodes]) {
+      const c = cloneVisible(n);
+      if (c) span.appendChild(c);
+    }
+    return span;
+  }
   if (!isVisible(el)) return null;
   const copy = el.cloneNode(false) as Element;
   // The clone is detached, so marking it is invisible to the page.
   const ref = refOfEl.get(el);
   if (ref) copy.setAttribute(REF_ATTR, ref);
   if (tag === "input" || tag === "textarea" || tag === "select") return copy;
-  for (const child of el.childNodes) {
+  // Open shadow roots: the shadow tree is what's rendered (light children show only through its slots).
+  const sr = (el as HTMLElement).shadowRoot;
+  for (const child of sr ? sr.childNodes : el.childNodes) {
     const c = cloneVisible(child);
     if (c) copy.appendChild(c);
   }
-  // Open shadow roots: flatten their visible content in.
-  if ((el as HTMLElement).shadowRoot) {
-    for (const child of (el as HTMLElement).shadowRoot!.childNodes) {
-      const c = cloneVisible(child);
-      if (c) copy.appendChild(c);
+  // A block named only for assistive technology (aria-label, aria-labelledby, role=img): the name is what
+  // tells it apart (live: Chase's account tiles showed balances with no card name). Write it in.
+  if (!ref) {
+    const label = blockLabel(el);
+    if (label && !squash(copy.textContent).toLowerCase().includes(label.toLowerCase())) {
+      const role = el.getAttribute("role");
+      const named = el.ownerDocument.createElement(role === "img" ? "span" : "p");
+      named.textContent = role === "img" ? `(image: ${label})` : `${label}:`;
+      if (role !== "img") {
+        const strong = el.ownerDocument.createElement("strong");
+        strong.textContent = named.textContent;
+        named.textContent = "";
+        named.appendChild(strong);
+      }
+      copy.insertBefore(named, copy.firstChild);
     }
   }
   return copy;
+}
+
+/** The accessible name of a block that has no ref (a tile, a group, an image drawn with CSS), or "". */
+function blockLabel(el: Element): string {
+  const role = el.getAttribute("role") ?? "";
+  if (/^(presentation|none)$/.test(role)) return "";
+  let label = squash(el.getAttribute("aria-label"));
+  const by = el.getAttribute("aria-labelledby");
+  if (!label && by) {
+    const root = el.getRootNode() as Document | ShadowRoot;
+    label = squash(by.split(/\s+/).map((id) => root.getElementById?.(id)?.textContent ?? document.getElementById(id)?.textContent ?? "").join(" "));
+  }
+  if (label.length < 3) return "";
+  // Only blocks and pictures: an inline icon's label inside a sentence would just repeat noise.
+  if (role === "img") return label.slice(0, 160);
+  const d = getComputedStyle(el).display;
+  return /^(block|flex|grid|list-item|table|table-row|inline-block|inline-flex|inline-grid)$/.test(d) ? label.slice(0, 160) : "";
 }
 
 function textOf(el: Element): string {
@@ -211,7 +277,10 @@ export function listLinks(): LinkItem[] {
   const out: LinkItem[] = [];
   for (const el of refElements()) {
     if (!isVisible(el)) continue;
-    const item: LinkItem = { ref: refOfEl.get(el)!, kind: kindOf(el), text: textOf(el), region: regionOf(el) };
+    const ref = refOfEl.get(el)!;
+    const item: LinkItem = { ref, kind: kindOf(el), text: textOf(el) || nameOf(el), region: regionOf(el) };
+    const st = /\(([^)]*)\)$/.exec(refNote(ref, "x"))?.[1];
+    if (st) item.state = st;
     const href = (el as HTMLAnchorElement).href;
     if (href) item.href = href;
     out.push(item);
@@ -219,12 +288,33 @@ export function listLinks(): LinkItem[] {
   return out;
 }
 
+/**
+ * What a bare ref needs to be usable: its name when it shows no text (an icon button, a chevron), and its
+ * state (expanded, checked, selected). Live: Chase's "[e10]" was the Credit cards collapse toggle; the agent
+ * clicked it five times not knowing.
+ */
+function refNote(ref: string, shownText: string): string {
+  const live = elementByRef(ref);
+  if (!live) return "";
+  const name = shownText ? "" : nameOf(live).slice(0, 80);
+  const states: string[] = [];
+  const exp = live.getAttribute("aria-expanded");
+  if (exp === "true") states.push("expanded");
+  if (exp === "false") states.push("collapsed");
+  const checked = live.getAttribute("aria-checked") ?? live.getAttribute("aria-pressed") ?? ((live as HTMLInputElement).type && /^(checkbox|radio)$/.test((live as HTMLInputElement).type) ? String((live as HTMLInputElement).checked) : null);
+  if (checked === "true") states.push(live.getAttribute("aria-pressed") ? "pressed" : "checked");
+  if (live.getAttribute("aria-selected") === "true") states.push("selected");
+  if (live.getAttribute("aria-disabled") === "true" || (live as HTMLButtonElement).disabled) states.push("disabled");
+  const st = states.length ? ` (${states.join(", ")})` : "";
+  return name ? `: ${name.replace(/[⟦⟧\]]/g, "")}${st}` : st;
+}
+
 /** Marks refs in the clone with text that survives HTML→markdown, e.g. "Reply ⟦e12⟧". */
 function inlineRefMarkers(root: Element): void {
   for (const el of root.querySelectorAll(`[${REF_ATTR}]`)) {
     const ref = el.getAttribute(REF_ATTR)!;
     const tag = el.tagName.toLowerCase();
-    const marker = el.ownerDocument.createTextNode(` ⟦${ref}⟧`);
+    const marker = el.ownerDocument.createTextNode(` ⟦${ref}${refNote(ref, squash(el.textContent))}⟧`);
     if (tag === "input" || tag === "textarea" || tag === "select") {
       const label = el.ownerDocument.createElement("span");
       label.textContent = `[${kindOf(el)}: ${textOf(el) || (el as HTMLInputElement).name || ""}] ⟦${ref}⟧`;
@@ -253,7 +343,12 @@ function waitForQuiet(quietMs: number, maxWaitMs: number): Promise<void> {
 }
 
 const words = (s: string) => (s.match(/\S+/g) ?? []).length;
-const fromMarkers = (s: string) => s.replace(/⟦(e\d+)⟧/g, "[$1]");
+const fromMarkers = (s: string) => s.replace(/⟦(e\d+)([^⟧]*)⟧/g, "[$1$2]");
+/**
+ * Defuddle turns blocks whose class looks like a callout into "> [!-full-width] \-full-width" (live: Chase).
+ * A callout type starting with "-" is a class name, not a callout: drop that line, keep the quote's text.
+ */
+const dropFakeCallouts = (s: string) => s.replace(/^> \[!-[^\]\n]*\][^\n]*\n?/gm, "");
 
 /** What the converter returns when Turndown throws; it then embeds the raw HTML (live: Gmail, 13 Nov 2026). */
 const CONVERSION_FAILED = /^Partial conversion completed with errors/;
@@ -332,10 +427,64 @@ export async function extract(p: ExtractParams = {}): Promise<ExtractResult> {
     usedFallback = !p.within;
     content = markdownOf(doc.body, url);
   }
-  content = fromMarkers(content).trim();
+  content = dropFakeCallouts(fromMarkers(content)).trim();
+  const mode = p.mode ?? "content";
+  if (mode === "outline") content = [headingMap(scope), controlList(scope, new Set())].filter(Boolean).join("\n\n");
+  else if (mode === "auto") {
+    // The hybrid: what the markdown dropped (the article extractor keeps the main text, not an app's
+    // controls) is listed after it with names and states, and long pages get a map of their sections.
+    const shown = new Set([...content.matchAll(/\[(e\d+)[\]:( ]/g)].map((m) => m[1]!));
+    const map = headingMap(scope);
+    const rest = controlList(scope, shown);
+    content = [map && map.split("\n").length > 4 ? map : "", content, rest].filter(Boolean).join("\n\n");
+  }
   const out: ExtractResult = { url, title: document.title, content, wordCount: words(content), usedFallback };
   if (p.includeLinks) out.links = listLinks();
   return out;
+}
+
+/** The page's sections as an indented list: headings (inside open shadow roots too) and labelled dialogs. */
+function headingMap(scope: Element): string {
+  const lines: string[] = [];
+  for (const h of deepQueryAll(scope, "h1, h2, h3, h4, h5, h6, [role=heading], dialog[aria-label], [role=dialog][aria-label]")) {
+    if (lines.length >= 40) break;
+    if (!isVisible(h)) continue;
+    const isDialog = /dialog/i.test(h.tagName) || h.getAttribute("role") === "dialog";
+    const level = isDialog ? 1 : Number(/h(\d)/i.exec(h.tagName)?.[1] ?? h.getAttribute("aria-level") ?? 2);
+    const text = isDialog ? `Dialog: ${squash(h.getAttribute("aria-label"))}` : squash((h as HTMLElement).innerText ?? h.textContent).slice(0, 100);
+    if (text) lines.push(`${"  ".repeat(Math.max(0, level - 1))}- ${text}`);
+  }
+  return lines.length ? `## Page outline\n${lines.join("\n")}` : "";
+}
+
+/** Visible controls with refs (except those already shown), one line each: ref, kind, name, state. */
+function controlList(scope: Element, skip: Set<string>): string {
+  const rows: Array<{ el: Element; ref: string; name: string; st?: string }> = [];
+  for (const el of refElements()) {
+    if (rows.length >= 80) break;
+    const ref = refOfEl.get(el)!;
+    if (skip.has(ref) || !composedContains(scope, el) || !isVisible(el)) continue;
+    rows.push({ el, ref, name: (textOf(el) || nameOf(el)).slice(0, 100), st: /\(([^)]*)\)$/.exec(refNote(ref, "x"))?.[1] });
+  }
+  // The same name more than once ("Pay card" on every tile): say which tile or section each one is in.
+  const count = new Map<string, number>();
+  for (const r of rows) count.set(r.name, (count.get(r.name) ?? 0) + 1);
+  const lines = rows.map((r) => {
+    const where = (count.get(r.name) ?? 0) > 1 ? contextOf(r.el) : "";
+    return `- [${r.ref}] ${kindOf(r.el)}${r.name ? ` "${r.name}"` : ""}${r.st ? ` (${r.st})` : ""}${where ? ` in "${where}"` : ""}`;
+  });
+  return lines.length ? `## Controls${skip.size ? " not shown above" : ""}\n${lines.join("\n")}` : "";
+}
+
+/** The nearest labelled block or section heading around an element (through shadow roots), for telling repeats apart. */
+function contextOf(el: Element): string {
+  for (let a = composedParent(el), i = 0; a && i < 40; a = composedParent(a), i++) {
+    const label = blockLabel(a);
+    if (label) return label;
+    const h = a.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4");
+    if (h) return squash(h.textContent).slice(0, 80);
+  }
+  return "";
 }
 
 function hash(s: string): string {

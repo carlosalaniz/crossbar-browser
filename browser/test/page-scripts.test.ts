@@ -71,6 +71,34 @@ describe("extraction", { skip: skipReason }, () => {
     assert.match(r.content, /\[the Caddy docs \[e\d+\]\]\(https:\/\/caddyserver\.com\/docs\/\)/);
   });
 
+  test("a dashboard of web components: tiles keep their names, bare refs say what they are (live: Chase, 12 Nov 2026)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/pages/accounts"));
+    const r = await scripts.extract(s, { mode: "auto" });
+    // Each balance comes with its card's name, which lives only in the tile's aria-label.
+    for (const [card, balance] of [["Orbit Rewards Visa (...4410)", "$1,203.17"], ["Harbor Cash Mastercard (...9921)", "$58.40"], ["Meadow Travel Card (...0077)", "$0.00"]] as const) {
+      const at = r.content.indexOf(card);
+      assert.ok(at >= 0, `${card} missing:\n${r.content}`);
+      assert.ok(r.content.indexOf(balance, at) > at && r.content.indexOf(balance, at) - at < 200, `${balance} not right after ${card}:\n${r.content}`);
+    }
+    // The icon-only chevron: its name and state, not a bare ref.
+    assert.match(r.content, /\[e\d+: Collapse credit cards \(expanded\)\]/);
+    // Buttons inside the shadow roots get refs too.
+    assert.equal((r.content.match(/Pay card \[e\d+\]/g) ?? []).length, 3, r.content);
+    // Outline: sections and every control with its name and state, no body text.
+    const o = await scripts.extract(s, { mode: "outline" });
+    assert.match(o.content, /## Page outline\n- Good evening\n  - Credit cards/);
+    assert.match(o.content, /\[e\d+\] button "Collapse credit cards" \(expanded\)/);
+    assert.doesNotMatch(o.content, /\$1,203\.17/);
+    // Repeated names say which tile they're in.
+    assert.match(o.content, /button "Pay card" in "Harbor Cash Mastercard \(\.\.\.9921\)"/);
+  });
+
+  test("callout markers made of class names are dropped", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/pages/accounts"));
+    const r = await scripts.extract(s, { mode: "content" });
+    assert.doesNotMatch(r.content, /\[!-/);
+  });
+
   test("whole-page fallback when the article extractor finds too little", async () => {
     const s = await openPage(env, env.site.url("a.test", "/pages/ads"));
     const r = await scripts.extract(s, { minWords: 500 });

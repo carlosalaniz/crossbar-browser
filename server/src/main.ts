@@ -5,7 +5,8 @@ import { join, resolve } from "node:path";
 import { Auth } from "@crossbar/auth/auth";
 import { LocalPool, localLauncher } from "@crossbar/browser/pool";
 import { remoteLauncher } from "@crossbar/browser/remote";
-import { AdBlocker } from "@crossbar/browser/adblock";
+import { createHash } from "node:crypto";
+import { AdBlocker, EXTRA_FILTERS } from "@crossbar/browser/adblock";
 import { buildServices } from "./services.ts";
 import { createApp } from "./http.ts";
 import { openDb } from "./db.ts";
@@ -30,7 +31,8 @@ if (process.argv[2] === "reset-owner") {
 async function loadAdblock(): Promise<AdBlocker | undefined> {
   if (env.CROSSBAR_ADBLOCK === "off") return undefined;
   // uBlock Origin's lists (ADR 0034), rebuilt daily: its quick fixes change often.
-  const cache = join(dataDir, "adblock-ubo.bin");
+  // The cache name carries a hash of Crossbar's own rules, so changing them rebuilds at once.
+  const cache = join(dataDir, `adblock-ubo-${createHash("sha256").update(EXTRA_FILTERS).digest("hex").slice(0, 8)}.bin`);
   try {
     if (existsSync(cache) && Date.now() - (await import("node:fs")).statSync(cache).mtimeMs < 24 * 3600_000) return AdBlocker.deserialize(readFileSync(cache));
     const b = await AdBlocker.fromUblockLists().catch(() => AdBlocker.fromPrebuilt());

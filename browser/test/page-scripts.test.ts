@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { setup, openPage, evaluate, sleep, skipReason, type Env } from "./harness.ts";
 import { PageScripts, pageBundle } from "../src/page-scripts/index.ts";
 import { scrollAndExtract, clampCaps, SCROLL_CAP_CEILING } from "../src/page-scripts/scroll.ts";
-import { AdBlocker } from "../src/adblock.ts";
+import { AdBlocker, EXTRA_FILTERS } from "../src/adblock.ts";
 import { holdNonGet } from "../src/gate.ts";
 
 describe("page bundle", () => {
@@ -17,6 +17,15 @@ describe("page bundle", () => {
     assert.match(b.cosmeticCss("https://www.example.com/s?k=usb"), /promo-strip/);
     assert.equal(b.extendedSelectors("https://www.example.com/s?k=usb").length, 1);
     assert.doesNotMatch(b.cosmeticCss("https://www.other.com/"), /promo-strip/);
+  });
+
+  test("Crossbar's own rules block Ad-Shield's ad recovery from other sites, on every domain it rotates to (live: solsticeforum.com)", () => {
+    const b = AdBlocker.fromLists([EXTRA_FILTERS]);
+    const block = (url: string, page: string, resourceType = "Script") => b.shouldBlock({ url, method: "GET", resourceType, targetType: "page" } as never, page);
+    for (const host of ["stg.html-load.com", "stg.content-loader.com", "2.stg.content-loader.com", "x.css-load.com", "x.img-load.com"]) {
+      assert.equal(block(`https://${host}/script/www.solsticeforum.com.js`, "https://www.solsticeforum.com/threads/x/"), true, host);
+    }
+    assert.equal(block("https://0.stg.content-loader.com/session/a/b", "https://www.solsticeforum.com/", "XHR"), true);
   });
 
   test("scroll caps are clamped to the server ceiling", () => {

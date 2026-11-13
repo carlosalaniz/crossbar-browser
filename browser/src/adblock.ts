@@ -3,6 +3,8 @@
 // @ghostery/adblocker is MPL-2.0 and used unmodified.
 import { FiltersEngine, Request } from "@ghostery/adblocker";
 import { parse as parseDomain } from "tldts-experimental";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { GateRequest } from "./gate.ts";
 
 const TYPE_MAP: Record<string, string> = {
@@ -34,6 +36,9 @@ export const UBO_LISTS = [
   "https://ublockorigin.github.io/uAssets/thirdparties/easyprivacy.txt",
 ];
 
+/** Crossbar's own filters (ADR 0034), as data next to the code. */
+export const EXTRA_FILTERS = readFileSync(fileURLToPath(new URL("./adblock-extra.txt", import.meta.url)), "utf8");
+
 export class AdBlocker {
   readonly engine: FiltersEngine;
   constructor(engine: FiltersEngine) {
@@ -50,7 +55,15 @@ export class AdBlocker {
    * selectors (:has-text() and friends) loaded. Not used in CI (no live sites).
    */
   static async fromUblockLists(fetchFn: typeof fetch = fetch): Promise<AdBlocker> {
-    return new AdBlocker(await FiltersEngine.fromLists(fetchFn, UBO_LISTS, { loadExtendedSelectors: true, loadCosmeticFilters: true, loadNetworkFilters: true, enableCompression: true }));
+    const lists = await Promise.all(
+      UBO_LISTS.map(async (u) => {
+        const r = await fetchFn(u);
+        if (!r.ok) throw new Error(`${u}: ${r.status}`);
+        return r.text();
+      }),
+    );
+    // Crossbar's own rules last (adblock-extra.txt): what uBO's lists leave to per-site rules.
+    return new AdBlocker(FiltersEngine.parse([...lists, EXTRA_FILTERS].join("\n"), { loadExtendedSelectors: true, loadCosmeticFilters: true, loadNetworkFilters: true, enableCompression: true }));
   }
 
   /** Downloads the prebuilt EasyList + EasyPrivacy engine. Not used in CI (no live sites). */

@@ -1,0 +1,12 @@
+! SPDX-License-Identifier: AGPL-3.0-only
+! Crossbar's own filters, applied after uBlock Origin's lists (ADR 0034). Same syntax as uBO's lists.
+! Each rule says where it was seen.
+!
+! Ad-Shield "ad recovery": when blocking is detected it re-inserts the ads through its own servers and
+! rotates to the next domain when one is blocked. uBO's lists name it per site only; live on
+! solsticeforum.com (13 Nov 2026) it moved from html-load.com to content-loader.com.
+||html-load.com^$third-party
+||content-loader.com^$third-party
+||css-load.com^$third-party
+||img-load.com^$third-party
+||ad-shield.cc^$third-party

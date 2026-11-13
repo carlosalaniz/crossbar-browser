@@ -12,6 +12,13 @@ describe("page bundle", () => {
   test("bundles", async () => {
     assert.ok((await pageBundle()).length > 10_000);
   });
+  test("a site's hide rules apply on its www host (registrable domain; live: none of Amazon's applied)", () => {
+    const b = AdBlocker.fromLists(["example.com##.promo-strip", "example.com##.deal:has-text(Sponsored)"]);
+    assert.match(b.cosmeticCss("https://www.example.com/s?k=usb"), /promo-strip/);
+    assert.equal(b.extendedSelectors("https://www.example.com/s?k=usb").length, 1);
+    assert.doesNotMatch(b.cosmeticCss("https://www.other.com/"), /promo-strip/);
+  });
+
   test("scroll caps are clamped to the server ceiling", () => {
     assert.deepEqual(clampCaps({ maxScrolls: 10_000, maxSeconds: 5, maxTokens: 1e9 }), { maxScrolls: SCROLL_CAP_CEILING.maxScrolls, maxSeconds: 5, maxTokens: SCROLL_CAP_CEILING.maxTokens });
   });
@@ -156,7 +163,7 @@ describe("scroll and extract", { skip: skipReason }, () => {
 });
 
 describe("ad blocking", { skip: skipReason }, () => {
-  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner"]);
+  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner", "a.test##.r1:has-text(Sponsored)"]);
   let env: Env;
   let scripts: PageScripts;
   before(async () => {
@@ -193,5 +200,20 @@ describe("ad blocking", { skip: skipReason }, () => {
     assert.equal(await evaluate(env, s, "document.querySelectorAll('style').length"), styles);
     assert.equal(await evaluate(env, s, "document.getElementById('cb-cosmetic')"), null);
     assert.match(r.content, /Real content/);
+  });
+
+  test("extended rules (uBO :has-text) leave sponsored results out of what the agent reads; the live page is untouched (ADR 0034)", async () => {
+    const url = env.site.url("a.test", "/pages/ads");
+    const s = await openPage(env, url);
+    const dom = await scripts.call<{ classes: string[] }>(s, "domTokens");
+    const extended = blocker.extendedSelectors(url, dom);
+    assert.equal(extended.length, 1);
+    await scripts.call(s, "applyCosmetics", { css: blocker.cosmeticCss(url, dom), extended });
+    const r = await scripts.extract(s, { minWords: 1 });
+    assert.doesNotMatch(r.content, /Cheap widgets/);
+    assert.match(r.content, /Homelab guide/);
+    // Evaluated in the isolated world only: the page's own elements and styles are as they were.
+    assert.equal(await evaluate(env, s, "getComputedStyle(document.querySelector('.r1')).display"), "block");
+    assert.equal(await evaluate(env, s, "document.querySelector('.r1').getAttribute('style')"), null);
   });
 });

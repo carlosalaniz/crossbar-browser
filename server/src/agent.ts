@@ -698,8 +698,10 @@ export class AgentSession {
     const url = await tab.currentUrl().catch(() => "");
     const site = this.s.sites.resolve(this.userId, url);
     if (this.s.adblock && site.adblock && url.startsWith("http")) {
-      const css = this.s.adblock.cosmeticCss(url, await tab.domTokens().catch(() => ({})));
-      if (css) await tab.applyCosmetics(css).catch(() => {});
+      const dom = await tab.domTokens().catch(() => ({}));
+      const css = this.s.adblock.cosmeticCss(url, dom);
+      const extended = this.s.adblock.extendedSelectors(url, dom);
+      if (css || extended.length) await tab.applyCosmetics(css, extended).catch(() => {});
     }
     const a = adapterFor(url);
     if (a?.consent) await tab.extract({ minWords: 0 }).catch(() => {});

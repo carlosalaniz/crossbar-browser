@@ -121,7 +121,7 @@ export interface Tab {
   scroll(opts: ScrollOptions): Promise<ScrollResult>;
   facts(): Promise<PageFacts>;
   domTokens(): Promise<{ classes: string[]; ids: string[]; hrefs: string[] }>;
-  applyCosmetics(css: string): Promise<void>;
+  applyCosmetics(css: string, extended?: unknown[]): Promise<void>;
   emulate(device: DeviceKind): Promise<void>;
   startScreencast(onFrame: (jpegBase64: string, meta: FrameMeta) => void, opts?: { maxWidth?: number; maxHeight?: number; fps?: number }): Promise<void>;
   stopScreencast(): Promise<void>;
@@ -731,8 +731,8 @@ class CdpTab implements Tab {
     return this.b.scripts.call<{ classes: string[]; ids: string[]; hrefs: string[] }>(this.session, "domTokens");
   }
 
-  async applyCosmetics(css: string): Promise<void> {
-    await this.b.scripts.call(this.session, "applyCosmetics", { css });
+  async applyCosmetics(css: string, extended: unknown[] = []): Promise<void> {
+    await this.b.scripts.call(this.session, "applyCosmetics", { css, extended });
   }
 
   private emulated: DeviceKind | null = null;

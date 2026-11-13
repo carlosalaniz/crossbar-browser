@@ -6,8 +6,10 @@
   "type": "module",
   "dependencies": {
     "@ghostery/adblocker": "^2.20.3",
+    "@ghostery/adblocker-extended-selectors": "^2.20.3",
     "defuddle": "^0.19.6",
     "esbuild": "^0.28.2",
+    "tldts-experimental": "^7.4.22",
     "ws": "^8.22.2"
   },
   "exports": {

@@ -29,10 +29,11 @@ if (process.argv[2] === "reset-owner") {
 
 async function loadAdblock(): Promise<AdBlocker | undefined> {
   if (env.CROSSBAR_ADBLOCK === "off") return undefined;
-  const cache = join(dataDir, "adblock.bin");
+  // uBlock Origin's lists (ADR 0034), rebuilt daily: its quick fixes change often.
+  const cache = join(dataDir, "adblock-ubo.bin");
   try {
-    if (existsSync(cache) && Date.now() - (await import("node:fs")).statSync(cache).mtimeMs < 7 * 24 * 3600_000) return AdBlocker.deserialize(readFileSync(cache));
-    const b = await AdBlocker.fromPrebuilt();
+    if (existsSync(cache) && Date.now() - (await import("node:fs")).statSync(cache).mtimeMs < 24 * 3600_000) return AdBlocker.deserialize(readFileSync(cache));
+    const b = await AdBlocker.fromUblockLists().catch(() => AdBlocker.fromPrebuilt());
     writeFileSync(cache, b.serialize());
     return b;
   } catch (e) {

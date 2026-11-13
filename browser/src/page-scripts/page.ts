@@ -4,6 +4,7 @@
 //
 // Adapted from MD-This-Page (https://github.com/Ademking/MD-This-Page, MIT, (c) Adem Kouki):
 // the visible-only clone, the wait for single-page apps, and the whole-page fallback (ADR 0002).
+import { querySelectorAll as extQuerySelectorAll, type AST } from "@ghostery/adblocker-extended-selectors";
 import * as DefuddleModule from "defuddle/full";
 
 // defuddle/full is a UMD bundle; its default export lands at different depths under different bundlers.
@@ -199,7 +200,7 @@ export function cloneVisible(node: Node): Node | null {
     }
     return span;
   }
-  if (!isVisible(el)) return null;
+  if (!isVisible(el) || adHidden.has(el)) return null;
   const copy = el.cloneNode(false) as Element;
   // The clone is detached, so marking it is invisible to the page.
   const ref = refOfEl.get(el);
@@ -399,6 +400,7 @@ export async function extract(p: ExtractParams = {}): Promise<ExtractResult> {
   if (document.readyState !== "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
   await waitForQuiet(p.quietMs ?? 300, p.maxWaitMs ?? 3000);
   tagRefs();
+  markExtendedAds();
   const scope = p.within ? areaOf(p.within) : document.body;
   if (!scope) throw new Error(p.within === "dialog" ? "No dialog is open." : `No element with ref ${p.within} on the page any more. Call find or read again.`);
   const visible = cloneVisible(scope) as HTMLElement | null;
@@ -565,7 +567,23 @@ export function scrollState(p: { within?: string } = {}): ScrollState {
  * id, nothing a MutationObserver sees (audit S03). Hidden ads are still hidden, which a page can measure.
  */
 let cosmeticSheet: CSSStyleSheet | null = null;
-export function applyCosmetics(p: { css: string }): number {
+/** Extended hide rules (uBO :has-text() and friends) for this page; evaluated at each read. */
+let extendedRules: AST[] = [];
+/** Elements the extended rules hide: left out of what the agent reads. The live page isn't touched. */
+let adHidden = new WeakSet<Element>();
+function markExtendedAds(): void {
+  adHidden = new WeakSet();
+  for (const ast of extendedRules) {
+    try {
+      for (const el of extQuerySelectorAll(document.documentElement, ast)) adHidden.add(el);
+    } catch {
+      /* a rule this evaluator can't run */
+    }
+  }
+}
+
+export function applyCosmetics(p: { css: string; extended?: unknown[] }): number {
+  extendedRules = (p.extended ?? []) as AST[];
   cosmeticSheet ??= new CSSStyleSheet();
   cosmeticSheet.replaceSync(p.css);
   if (!document.adoptedStyleSheets.includes(cosmeticSheet)) document.adoptedStyleSheets = [...document.adoptedStyleSheets, cosmeticSheet];

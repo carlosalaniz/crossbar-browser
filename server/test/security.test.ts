@@ -485,7 +485,7 @@ describe("challenges (ADR 0001)", () => {
   });
 
   test("ad blocking pauses while a person has control (audit S22)", async () => {
-    const adblock = { shouldBlock: (r: { url: string }) => r.url.includes("/ads/"), cosmeticCss: () => "" } as never;
+    const adblock = { shouldBlock: (r: { url: string }) => r.url.includes("/ads/"), cosmeticCss: () => "", extendedSelectors: () => [] } as never;
     const t = await startTestApp({ adblock });
     const pool = t.pool as FakePool;
     pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });

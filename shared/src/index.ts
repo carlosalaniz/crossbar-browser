@@ -229,6 +229,13 @@ export const TOOLS = {
     minToken: "read",
     class: "tighten",
   }),
+  finish: def({
+    name: "finish",
+    description: "Call when the task is done: closes this session's pages (each is a browser window). What the session has read still counts if you open more pages.",
+    input: z.object({}),
+    minToken: "read",
+    class: "read",
+  }),
   clear_browser_data: def({
     name: "clear_browser_data",
     description:
@@ -266,6 +273,7 @@ export const LoginBody = z.object({ username: z.string().max(64), password: z.st
 export const CreateTokenBody = z.object({ agentName: z.string().min(1).max(64).describe("Written on every audit row."), kind: TokenKind.default("read") });
 export const SiteBody = z.object({ pattern: z.string().min(3).max(253), level: SiteLevel.optional(), adblock: z.boolean().optional(), device: Device.optional() });
 export const NotifyBody = z.object({ ntfyUrl: z.string().url().nullable().describe("ntfy topic URL, e.g. https://ntfy.sh/my-secret-topic. null turns notifications off.") });
+export const TaintBody = z.object({ strict: z.boolean() });
 export const CategoryBody = z.object({
   category: z.enum(["banking", "mail", "passwords", "cloud", "signin", "government"]).describe("Sensitive category (ADR 0014)."),
   enabled: z.boolean().describe("On: agents may use these sites under the normal ladder. Off: blocked for agents."),
@@ -340,6 +348,8 @@ export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/api/settings/notifications", auth: "session", description: "Where notifications go." }),
   r({ method: "PUT", path: "/api/settings/notifications", auth: "session", freshFactor: true, description: "Change where notifications go (human only).", body: NotifyBody }),
   r({ method: "POST", path: "/api/settings/notifications/test", auth: "session", description: "Send a test notification." }),
+  r({ method: "GET", path: "/api/settings/taint", auth: "session", description: "Strict taint mode (ADR 0033): after a signed-in read, every new site opens anonymously." }),
+  r({ method: "PUT", path: "/api/settings/taint", auth: "session", freshFactor: true, description: "Turn strict taint mode on or off (human only).", body: TaintBody }),
   r({ method: "GET", path: "/api/settings/categories", auth: "session", description: "Sensitive categories (banking, mail…) and whether agents may use them." }),
   r({ method: "PUT", path: "/api/settings/categories", auth: "session", freshFactor: true, description: "Turn a sensitive category on or off for agents (human only, ADR 0014).", body: CategoryBody }),
   r({ method: "GET", path: "/api/openapi.json", auth: "public", description: "OpenAPI document generated from this contract." }),

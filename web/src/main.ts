@@ -590,6 +590,7 @@ async function settingsScreen() {
   me = await api<Me>("GET", "/api/me");
   const n = await api<{ ntfyUrl: string | null }>("GET", "/api/settings/notifications");
   const cats = await api<Array<{ id: string; label: string; help: string; enabled: boolean; examples: string[] }>>("GET", "/api/settings/categories");
+  const taint = await api<{ strict: boolean }>("GET", "/api/settings/taint");
   const ntfy = h("input", { class: "input", placeholder: "https://ntfy.sh/your-secret-topic", value: n.ntfyUrl ?? "" }) as HTMLInputElement;
   const msg = h("p", { class: "small" });
   const out = h("div", {});
@@ -631,6 +632,18 @@ async function settingsScreen() {
           }
         } }),
       ))),
+      h("label", { class: "card row between" },
+        h("div", {}, h("strong", {}, "Strict mode"), h("div", { class: "muted small" }, "Off (default): after an agent reads a signed-in page, sites you've set to use your login keep using it; anything an address would carry to a new site still asks you first. On: after a signed-in read, every new site opens without your login for the rest of that session.")),
+        h("input", { type: "checkbox", checked: taint.strict, onchange: async (e: Event) => {
+          const box = e.target as HTMLInputElement;
+          try {
+            await withFreshFactor(() => api("PUT", "/api/settings/taint", { strict: box.checked }));
+          } catch (err2) {
+            box.checked = !box.checked;
+            msg.textContent = (err2 as Error).message;
+          }
+        } }),
+      ),
       h("h3", {}, "Password"),
       h("p", { class: "muted small" }, "At least 10 characters."),
       h("form", { class: "stack", onsubmit: async (e: Event) => {

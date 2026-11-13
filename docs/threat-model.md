@@ -97,7 +97,8 @@ After a session reads while signed in:
 
 | New domain (not used by this session before the taint) | Result |
 |---|---|
-| Plain GET, no query string | Opens in the anonymous profile, no prompt |
+| Plain GET, no query string, to a site the person set to `read_as_you` or higher | Opens signed in, no prompt; the session then treats the site as used (ADR 0033). In strict mode: anonymous profile |
+| Plain GET, no query string, to any other site | Opens in the anonymous profile, no prompt |
 | Query string, fragment data, or a long path segment (threshold tuned in step 1/3, e.g. >40 chars or matches read text) | Asks; the card shows each value and whether it overlaps text read while signed in |
 | Form submit or any non-GET | Asks, with body fields |
 | Domain used before the taint | Normal rules |
@@ -138,7 +139,7 @@ Per ADRs 0001, 0011 and 0013 (a person can dismiss a false alarm; a captcha insi
 
 ## Settled decisions (11 Nov 2026)
 
-1. **Taint rule kept**: allow until tainted; after that, new domains open anonymously or ask.
+1. **Taint rule kept**: allow until tainted; after that, new domains open anonymously or ask. Amended by ADR 0033 (13 Nov 2026): sites the person gave their login keep it unless strict mode is on.
 2. **Token expiry**: revoked after 90 days unused.
 3. **Setup shows Read first**, Act beside it.
 4. **Anonymous profile is persistent.**

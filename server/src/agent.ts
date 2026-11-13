@@ -16,7 +16,7 @@ import type { Keys } from "./crypto.ts";
 import { sha256 } from "./crypto.ts";
 import type { Notifier } from "./notify.ts";
 import type { DB } from "./db.ts";
-import { now } from "./db.ts";
+import { getSetting, now } from "./db.ts";
 import type { Pacer } from "./pace.ts";
 
 export interface Services {
@@ -280,6 +280,24 @@ export class AgentSession {
     for (const off of this.offs) off();
     for (const p of this.pending.values()) await p.held.fail();
     for (const t of Object.values(this.tabs)) await t?.close().catch(() => {});
+  }
+
+  /**
+   * The task is done: close this session's pages (their windows). What the session read (taint, the read
+   * index) stays until the session ends: clearing it here would let a misled agent read, finish, then send.
+   */
+  async finish(): Promise<ToolResult> {
+    if (this.takeoverTabs.size) return { state: "error", message: "A person has control of a page; it stays open until they're done." };
+    for (const [id, p] of this.pending) {
+      this.pending.delete(id);
+      await p.held.fail();
+    }
+    for (const k of Object.keys(this.tabs) as Profile[]) {
+      await this.tabs[k]?.close().catch(() => {});
+      delete this.tabs[k];
+    }
+    this.pageDomain.clear();
+    return ok({ closed: true, next: "Pages closed. If you open another page, this session's earlier reads still count." });
   }
 
   // ---------------- gate policy ----------------
@@ -633,7 +651,22 @@ export class AgentSession {
     return this.challenge(block, tab, url, reason);
   }
 
+  /** Strict taint (ADR 0033, a person's setting): after a signed-in read, every new site opens anonymously. */
+  private strictTaint(): boolean {
+    return getSetting(this.s.db, this.userId, "strictTaint") === "1";
+  }
+
   private challenge(block: BlockState & { passwordFieldOrigins?: string[] }, tab: Tab, url: string, agentReason?: string): ToolResult {
+    // The anonymous profile is never signed in: a login wall there is never handed to a person. If the site
+    // has the person's login, say why it opened without it (live: 4 login tickets for made-in-china).
+    const site = this.s.sites.resolve(this.userId, url);
+    if (block.kind === "login" && tab.profile === "anon" && LEVEL_RANK[site.level] >= LEVEL_RANK.read_as_you) {
+      const from = registrable(hostOf(this.taintSource ?? "")) || "another site";
+      return {
+        state: "denied",
+        reason: `${registrable(hostOf(url))} opened without the person's login: this session read ${from} while signed in, and Crossbar is in strict mode, so new sites open anonymously. Nobody can log in here. Do what you can on ${from} in this session; for ${registrable(hostOf(url))}, the person can start a new agent session (or turn strict mode off in Crossbar → Settings).`,
+      };
+    }
     // Reuse an open ticket only for the same block (same kind, same origin); a different wall gets its own.
     const existing = this.s.tickets.listOpen(this.userId).find((x) => {
       const f = x.facts as { sessionId?: string; kind?: string; origin?: string };
@@ -745,8 +778,13 @@ export class AgentSession {
       if (carriesData(url) && !this.peekGrant(domain, "taint_exit", this.requestHash({ method: "GET", url }, null))) {
         return this.askBeforeNavigation(u, "taint_exit", `This session read pages while signed in, and ${domain} is new to it. The URL carries data, so a person has to approve.`);
       }
-      // Plain link after taint, or approved: anonymous profile.
-      profile = "anon";
+      if (profile === "personal" && !this.strictTaint()) {
+        // ADR 0033: a site the person set to use their login keeps it after a signed-in read elsewhere
+        // (live: Chase, then made-in-china opened anonymously and asked for a login 4 times). The address
+        // carries no data (or a person approved it), and from here on the session works there as on any
+        // site it has used.
+        this.usedBeforeTaint.add(domain);
+      } else profile = "anon"; // strict mode, or a site without the person's login: anonymous profile.
     }
     // The adapter's read host for this profile (ADR 0012): only between the site's own read hosts and www.
     const readHost = profile === "personal" ? adapter?.readHosts?.signedIn : adapter?.readHosts?.anonymous;

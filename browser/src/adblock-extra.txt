@@ -2,11 +2,7 @@
 ! Crossbar's own filters, applied after uBlock Origin's lists (ADR 0034). Same syntax as uBO's lists.
 ! Each rule says where it was seen.
 !
-! Ad-Shield "ad recovery": when blocking is detected it re-inserts the ads through its own servers and
-! rotates to the next domain when one is blocked. uBO's lists name it per site only; live on
-! solsticeforum.com (13 Nov 2026) it moved from html-load.com to content-loader.com.
-||html-load.com^$third-party
-||content-loader.com^$third-party
-||css-load.com^$third-party
-||img-load.com^$third-party
-||ad-shield.cc^$third-party
+! Ad-Shield "ad recovery" (solsticeforum.com and others): deliberately NOT blocked here (13 Nov 2026).
+! - Blocking its loader: the page blanks itself and opens a confirm dialog.
+! - Answering with a stand-in (redirect=noopjs): it notices and replaces the page with its own error page.
+! uBO beats it per site with scriptlets (+js), which Crossbar doesn't run yet (ADR 0034, step 2).

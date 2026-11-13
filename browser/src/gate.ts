@@ -30,6 +30,13 @@ export interface Decision {
   verdict: Verdict;
   /** Which rule decided, for the activity log (e.g. "read_list", "blocked_ad", "taint"). */
   rule?: string;
+  /** With deny: answer with this stand-in instead of failing the request (an ad blocker's redirect=). */
+  respond?: { contentType: string; bodyBase64: string };
+  /**
+   * With allow: pause again when the response arrives and ask `responsePolicy` (an ad blocker's header=
+   * rules, ADR 0036). The page gets nothing until it answers.
+   */
+  inspectResponse?: boolean;
 }
 export type GatePolicy = (r: GateRequest) => Verdict | Decision;
 
@@ -50,6 +57,10 @@ export interface NetworkGateOptions {
   onHeld?: (h: HeldRequest) => void;
   onRequest?: (r: GateRequest, v: Verdict, rule?: string) => void;
   onAttach?: (t: Attached) => void;
+  /** A server or proxy asked for HTTP sign-in; the gate cancelled it (no one is there to answer Chrome's box). */
+  onAuth?: (rootSessionId: string, url: string) => void;
+  /** Decides a response paused because its request's decision set inspectResponse. Allow when unset or on error. */
+  responsePolicy?: (r: GateRequest, status: number, headers: Array<{ name: string; value: string }>) => Verdict | Decision;
   /** Bypass service workers for page requests (Network.setBypassServiceWorker). */
   bypassServiceWorker?: boolean;
 }
@@ -88,6 +99,8 @@ export class NetworkGate {
   readonly attachErrors: Array<{ type: string; url: string; step: string; error: string }> = [];
   readonly seen: Array<{ request: GateRequest; verdict: Verdict; rule?: string }> = [];
   private readonly held = new Map<string, HeldRequest>();
+  /** Requests whose response will pause for responsePolicy, by session and request id. */
+  private readonly inspecting = new Map<string, GateRequest>();
   private readonly policy: GatePolicy;
   private readonly holdTimeoutMs: number;
   private readonly offs: Array<() => void> = [];
@@ -109,6 +122,12 @@ export class NetworkGate {
         this.attached.delete(p.sessionId);
       }),
       this.cdp.on("Fetch.requestPaused", (p, sessionId) => void this.onPaused(p, sessionId!)),
+      // HTTP sign-in (401/407): Chrome's own login box would wait for a person forever. Cancel it; the page
+      // gets the site's error page and the agent is told.
+      this.cdp.on("Fetch.authRequired", (p, sessionId) => {
+        void this.cdp.send("Fetch.continueWithAuth", { requestId: p.requestId, authChallengeResponse: { response: "CancelAuth" } }, sessionId).catch(() => {});
+        this.opts.onAuth?.(this.rootOf(sessionId!), p.request.url);
+      }),
     );
     // Browser-level auto-attach covers top-level targets: pages, service workers, shared workers.
     await this.cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
@@ -150,7 +169,7 @@ export class NetworkGate {
       }
     };
     // Order matters: Fetch first, then recurse into children, then let the target run.
-    const fetchOn = await step("Fetch.enable", () => this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, sessionId));
+    const fetchOn = await step("Fetch.enable", () => this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }], handleAuthRequests: true }, sessionId));
     // Dedicated workers have no Fetch domain; the spike showed their requests pause on the parent's session.
     if (!fetchOn && !FETCH_FROM_PARENT.has(t.type)) {
       // Fail closed: a target we can't gate never runs.
@@ -165,6 +184,8 @@ export class NetworkGate {
   }
 
   private async onPaused(p: Protocol.Fetch.RequestPausedEvent, sessionId: string): Promise<void> {
+    // Response stage: only requests whose decision asked for it (Fetch patterns are request-stage only).
+    if (p.responseStatusCode !== undefined || p.responseErrorReason !== undefined) return this.onResponse(p, sessionId);
     const t = this.attached.get(sessionId);
     const r: GateRequest = {
       requestId: p.requestId,
@@ -182,10 +203,15 @@ export class NetworkGate {
     };
     let verdict: Verdict;
     let rule: string | undefined;
+    let respond: Decision["respond"];
+    let inspect = false;
     try {
       const d = this.policy(r);
       if (typeof d === "string") verdict = d;
-      else ({ verdict, rule } = d);
+      else {
+        ({ verdict, rule, respond } = d);
+        inspect = !!d.inspectResponse;
+      }
     } catch {
       verdict = "deny"; // a policy bug fails closed
       rule = "policy_error";
@@ -195,7 +221,20 @@ export class NetworkGate {
     this.opts.onRequest?.(r, verdict, rule);
     const cont = () => this.cdp.send("Fetch.continueRequest", { requestId: r.requestId }, sessionId).catch(() => {});
     const fail = () => this.cdp.send("Fetch.failRequest", { requestId: r.requestId, errorReason: "BlockedByClient" }, sessionId).catch(() => {});
+    if (verdict === "allow" && inspect && this.opts.responsePolicy) {
+      const key = `${sessionId}:${r.requestId}`;
+      this.inspecting.set(key, r);
+      // A request that never reaches its response (cancelled, redirected) mustn't stay in the map.
+      setTimeout(() => this.inspecting.delete(key), 120_000).unref?.();
+      return void (await this.cdp.send("Fetch.continueRequest", { requestId: r.requestId, interceptResponse: true }, sessionId).catch(() => this.inspecting.delete(key)));
+    }
     if (verdict === "allow") return void (await cont());
+    if (verdict === "deny" && respond) {
+      await this.cdp
+        .send("Fetch.fulfillRequest", { requestId: r.requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: respond.contentType }, { name: "Access-Control-Allow-Origin", value: "*" }, { name: "Cache-Control", value: "no-store" }], body: respond.bodyBase64 }, sessionId)
+        .catch(() => fail());
+      return;
+    }
     if (verdict === "deny") return void (await fail());
 
     const key = `${sessionId}:${r.requestId}`;
@@ -214,5 +253,26 @@ export class NetworkGate {
     const h: HeldRequest = { request: r, rule, release: () => finish("released"), fail: () => finish("failed"), settled };
     this.held.set(key, h);
     this.opts.onHeld?.(h);
+  }
+
+  private async onResponse(p: Protocol.Fetch.RequestPausedEvent, sessionId: string): Promise<void> {
+    const key = `${sessionId}:${p.requestId}`;
+    const r = this.inspecting.get(key);
+    this.inspecting.delete(key);
+    let verdict: Verdict = "allow";
+    let rule: string | undefined;
+    if (r && p.responseStatusCode !== undefined && this.opts.responsePolicy) {
+      try {
+        const d = this.opts.responsePolicy(r, p.responseStatusCode, p.responseHeaders ?? []);
+        if (typeof d === "string") verdict = d;
+        else ({ verdict, rule } = d);
+      } catch {
+        verdict = "allow"; // only ad blocking asks here: a bug in it must not break pages
+      }
+    }
+    // Only allow or deny: a response is never held for a person.
+    if (verdict === "allow" || verdict === "hold") return void (await this.cdp.send("Fetch.continueResponse", { requestId: p.requestId }, sessionId).catch(() => {}));
+    if (r) this.opts.onRequest?.(r, verdict, rule);
+    await this.cdp.send("Fetch.failRequest", { requestId: p.requestId, errorReason: "BlockedByClient" }, sessionId).catch(() => {});
   }
 }

@@ -333,6 +333,48 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     await t.api("POST", `/api/tickets/${r.ticket!.id}/deny`, { user: "alice" });
   });
 
+  test("nothing waits for a person who isn't there: dialogs, the leave-page guard, file pickers, browser sign-in boxes (live: Ad-Shield's confirm stopped an agent)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    const events: string[] = [];
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = await c.call(name, args);
+      const d = r.data as { pageEvents?: string[] } | undefined;
+      events.push(...(d?.pageEvents ?? []), ...[String(r.message ?? ""), String(r.reason ?? "")].filter((x) => x.includes("Meanwhile")));
+      return r;
+    };
+    const log = async () => /nothing yet|alert closed|confirm: \w+|prompt: \w+|guard on|picked|timer set/.exec(((await call("read", {})).data as { content: string }).content)?.[0];
+    await call("open", { url: site.url("a.test", "/pages/dialogs") });
+    // A message is closed; a question gets Cancel, never OK; a prompt gets Cancel too.
+    assert.equal((await call("click", { text: "Show message" })).state, "ok");
+    assert.equal(await log(), "alert closed");
+    assert.equal((await call("click", { text: "Delete everything" })).state, "ok");
+    assert.equal(await log(), "confirm: false");
+    assert.equal((await call("click", { text: "Ask name" })).state, "ok");
+    assert.equal(await log(), "prompt: null");
+    assert.ok(events.some((e) => /question: "Delete everything\?".*Cancel/.test(e)), JSON.stringify(events));
+    // A question the page asks on its own, later: answered, and the agent hears about it.
+    await call("click", { text: "Later question" });
+    await sleep(2500);
+    await log();
+    assert.ok(events.some((e) => /A question nobody asked for/.test(e)), JSON.stringify(events));
+    // A file picker never opens Chrome's window; the agent is told.
+    await call("click", { text: "Upload" });
+    await sleep(300);
+    await log();
+    assert.ok(events.some((e) => /file picker/.test(e)), JSON.stringify(events));
+    // "Leave this page?": the agent asked to go, so it goes.
+    await call("click", { text: "Unsaved changes" });
+    assert.equal(await log(), "guard on");
+    const away = await call("open", { url: site.url("a.test", "/pages/article") });
+    assert.equal(away.state, "ok", JSON.stringify(away));
+    assert.match(((await call("read", {})).data as { content: string }).content, /Caddy/);
+    // A browser sign-in box is cancelled, not left open.
+    const auth = await call("open", { url: site.url("a.test", "/basic-auth") });
+    assert.notEqual(auth.state, "error", JSON.stringify(auth));
+    await call("read", {});
+    assert.ok(events.some((e) => /sign-in box/.test(e)), JSON.stringify(events));
+  });
+
   test("open a #route: lands on that route, without waiting for a load that never comes (live: Gmail, 13 Nov 2026)", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: site.url("a.test", "/pages/picker") });

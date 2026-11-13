@@ -23,6 +23,8 @@ export const NARROW_WINDOW = { width: 500, height: 1170 };
 
 export interface TabPolicy {
   decide(r: GateRequest): Verdict | Decision;
+  /** A response paused because decide set inspectResponse (ad blocking by response headers, ADR 0036). */
+  decideResponse?(r: GateRequest, status: number, headers: Array<{ name: string; value: string }>): Verdict | Decision;
   onHeld?(h: HeldRequest): void;
   onRequest?(r: GateRequest, verdict: Verdict, rule?: string): void;
 }
@@ -59,7 +61,9 @@ export interface FrameMeta {
 }
 
 export interface InputEvent {
-  type: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel" | "keyDown" | "keyUp" | "char" | "insertText" | "touchStart" | "touchMove" | "touchEnd" | "touchCancel";
+  type: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel" | "keyDown" | "keyUp" | "char" | "insertText" | "touchStart" | "touchMove" | "touchEnd" | "touchCancel" | "dialog";
+  /** dialog: OK (true) or Cancel (false). */
+  accept?: boolean;
   x?: number;
   y?: number;
   deltaX?: number;
@@ -90,6 +94,15 @@ export interface Box {
 export interface ViewState {
   focus: (Box & { kind: Exclude<FocusKind, "none">; area: Box | null }) | null;
   fields: Array<Box & { kind: Exclude<FocusKind, "none" | "frame"> }>;
+  /** A dialog the page opened (alert, confirm, prompt, leave-page), waiting for the person in control. */
+  dialog?: PageDialog;
+}
+
+export interface PageDialog {
+  type: "alert" | "confirm" | "prompt" | "beforeunload";
+  /** The page's own text: untrusted. */
+  message: string;
+  defaultPrompt?: string;
 }
 
 /** Keys without text need their virtual key code, or Chrome doesn't run the default action (delete, move, submit). */
@@ -131,6 +144,8 @@ export interface Tab {
   onClose(cb: () => void): () => void;
   /** Takeover input, from a person. Not an agent tool. */
   input(ev: InputEvent): Promise<void>;
+  /** What happened on the page that the agent should hear about (a dialog answered, a crash, a file picker), since last asked. */
+  takeNotes(): string[];
   /** Focused field, its form and the fields on screen (takeover only). */
   viewState(): Promise<ViewState>;
   screenshot(clip?: { x: number; y: number; width: number; height: number }): Promise<string>;
@@ -203,6 +218,14 @@ interface Located {
   /** What a click on it is for (ADR 0030). */
   intent: "open" | "act";
 }
+const hostOfUrl = (u: string): string => {
+  try {
+    return new URL(u).host;
+  } catch {
+    return "A site";
+  }
+};
+
 export const DESKTOP = { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false };
 export const MOBILE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
 
@@ -217,6 +240,8 @@ class ManagedBrowser {
   version = "";
   /** Called whenever a tab goes away (closed by us or by the page), for idle tracking. */
   onTabGone?: () => void;
+  /** Called once if the connection to this Chrome ends. */
+  onDead?: () => void;
 
   async start(launcher: Launcher, userId: string, profile: Profile): Promise<void> {
     const b = await launcher(userId, profile);
@@ -226,11 +251,21 @@ class ManagedBrowser {
     this.version = (await this.cdp.send("Browser.getVersion")).product;
     this.gate = new NetworkGate(this.cdp, {
       policy: (r) => this.route(r),
+      responsePolicy: (r, status, headers) => this.tabsBySession.get(r.rootSessionId)?.policy?.decideResponse?.(r, status, headers) ?? "allow",
       onHeld: (h) => this.tabsBySession.get(h.request.rootSessionId)?.policy?.onHeld?.(h),
       onRequest: (r, v, rule) => this.tabsBySession.get(r.rootSessionId)?.policy?.onRequest?.(r, v, rule),
       onAttach: (t) => this.onAttach(t),
+      onAuth: (root, url) => this.tabsBySession.get(root)?.note(`${hostOfUrl(url)} asked for a username and password in a browser sign-in box (HTTP authentication). Crossbar cancelled it; nobody can fill it in here.`),
     });
     await this.gate.start();
+    // Chrome exited or crashed: every tab is gone, and the pool must launch a new browser next time.
+    this.cdp.onClose(() => {
+      for (const [s, tab] of [...this.tabsBySession]) {
+        this.tabsBySession.delete(s);
+        tab.emitClose();
+      }
+      this.onDead?.();
+    });
     this.cdp.on("Target.detachedFromTarget", (p) => {
       const tab = this.tabsBySession.get(p.sessionId);
       if (tab) {
@@ -330,7 +365,15 @@ class CdpTab implements Tab {
   policy?: TabPolicy;
   /** Origin of the page this tab last loaded. */
   pageOrigin = "";
-  popupsAllowed = false;
+  private _popupsAllowed = false;
+  get popupsAllowed(): boolean {
+    return this._popupsAllowed;
+  }
+  /** A dialog the page opened and nobody has answered yet. */
+  private openDialog: PageDialog | null = null;
+  /** When the agent last asked to leave this page (open, back): a "leave this page?" dialog then says yes. */
+  private agentNavAt = 0;
+  private readonly notes: string[] = [];
   private readonly popupCbs = new Set<(t: Tab) => void>();
   private readonly closeCbs = new Set<() => void>();
   private lastDoc: { status: number | null; headers: Record<string, string> } = { status: null, headers: {} };
@@ -361,6 +404,27 @@ class CdpTab implements Tab {
     await this.cdp.send("Network.enable", {}, this.session);
     await this.cdp.send("DOM.enable", undefined, this.session);
     await this.cdp.send("Page.setDownloadBehavior" as never, { behavior: "deny" } as never, this.session).catch(() => {});
+    // Nothing may wait for a person who isn't there: file pickers are intercepted (Chrome's own window
+    // never opens), dialogs are answered, a crashed page is reloaded.
+    await this.cdp.send("Page.setInterceptFileChooserDialog", { enabled: true }, this.session).catch(() => {});
+    await this.cdp.send("Inspector.enable", undefined, this.session).catch(() => {});
+    this.offs.push(
+      this.cdp.on("Page.javascriptDialogOpening", (p, s) => {
+        if (s === this.session) this.onDialog(p);
+      }),
+      this.cdp.on("Page.javascriptDialogClosed", (_p, s) => {
+        if (s === this.session) this.openDialog = null;
+      }),
+      this.cdp.on("Page.fileChooserOpened", (_p, s) => {
+        if (s === this.session) this.note("The page opened a file picker (an upload). Crossbar can't choose files from your computer, so nothing was picked.");
+      }),
+      this.cdp.on("Inspector.targetCrashed", (_p, s) => {
+        if (s !== this.session) return;
+        this.b.scripts.forget(this.session);
+        this.note("The page crashed. Crossbar reloaded it; read it again.");
+        setTimeout(() => void this.cdp.send("Page.reload", {}, this.session).catch(() => {}), 300);
+      }),
+    );
     await this.emulate("desktop");
     this.offs.push(
       this.cdp.on("Network.responseReceived", (p, s) => {
@@ -384,8 +448,41 @@ class CdpTab implements Tab {
     this.policy = p;
   }
 
+  /** Takeover on or off. While on, the person answers dialogs; when it ends, an open one is cancelled. */
   allowPopups(on: boolean): void {
-    this.popupsAllowed = on;
+    this._popupsAllowed = on;
+    if (!on && this.openDialog) void this.answerDialog(false, undefined, "auto");
+  }
+
+  note(text: string): void {
+    this.notes.push(text);
+    if (this.notes.length > 10) this.notes.shift();
+  }
+
+  takeNotes(): string[] {
+    return this.notes.splice(0);
+  }
+
+  private onDialog(p: { type: string; message: string; defaultPrompt?: string }): void {
+    const d: PageDialog = { type: p.type as PageDialog["type"], message: String(p.message ?? "").slice(0, 300), ...(p.defaultPrompt ? { defaultPrompt: p.defaultPrompt } : {}) };
+    this.openDialog = d;
+    // A person in control sees it in Crossbar's window and answers it there.
+    if (this._popupsAllowed) return;
+    // Otherwise Crossbar answers, after a moment as a person would: OK to a plain message, Cancel to any
+    // question (never "yes, delete" on the agent's behalf), and "leave" only when the agent asked to leave.
+    const accept = d.type === "alert" || (d.type === "beforeunload" && Date.now() - this.agentNavAt < 20_000);
+    setTimeout(() => void this.answerDialog(accept, undefined, "auto"), 600 + Math.random() * 800);
+  }
+
+  private async answerDialog(accept: boolean, text: string | undefined, by: "auto" | "person"): Promise<void> {
+    const d = this.openDialog;
+    if (!d) return;
+    this.openDialog = null;
+    await this.cdp.send("Page.handleJavaScriptDialog", { accept, ...(text !== undefined && d.type === "prompt" ? { promptText: text } : {}) }, this.session).catch(() => {});
+    if (by === "person") return;
+    const what = d.type === "alert" ? "a message" : d.type === "beforeunload" ? "a 'leave this page?' question" : d.type === "prompt" ? "a question asking for text" : "a question";
+    const did = d.type === "alert" ? "closed it" : d.type === "beforeunload" ? (accept ? "left the page, as you asked" : "stayed on the page (you didn't ask to leave it)") : "answered Cancel (Crossbar never says OK to a question for you)";
+    this.note(`The page showed ${what}: "${d.message}" (page text, untrusted). Crossbar ${did}.`);
   }
   onPopup(cb: (t: Tab) => void): () => void {
     this.popupCbs.add(cb);
@@ -428,6 +525,7 @@ class CdpTab implements Tab {
 
   async navigate(url: string): Promise<NavResult> {
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http and https URLs can be opened.");
+    this.agentNavAt = Date.now();
     this.lastDoc = { status: null, headers: {} };
     const loaded = this.waitLoad();
     const r = await this.cdp.send("Page.navigate", { url }, this.session);
@@ -441,6 +539,7 @@ class CdpTab implements Tab {
 
   async followLink(url: string): Promise<NavResult | null> {
     if (!/^https?:\/\//i.test(url)) return null;
+    this.agentNavAt = Date.now();
     const ref = await this.b.scripts.call<string | null>(this.session, "refForHref", { href: url }).catch(() => null);
     if (!ref) return null;
     this.lastDoc = { status: null, headers: {} };
@@ -465,6 +564,7 @@ class CdpTab implements Tab {
   }
 
   async back(): Promise<NavResult> {
+    this.agentNavAt = Date.now();
     const { currentIndex, entries } = await this.cdp.send("Page.getNavigationHistory", undefined, this.session);
     if (currentIndex <= 0) return this.nav();
     const loaded = this.waitLoad(10000);
@@ -834,6 +934,10 @@ class CdpTab implements Tab {
 
   async input(ev: InputEvent): Promise<void> {
     switch (ev.type) {
+      case "dialog":
+        // Takeover: the person answered the page's dialog in Crossbar's window.
+        await this.answerDialog(!!ev.accept, ev.text, "person");
+        return;
       case "insertText":
         // Takeover only: the person types (or their password manager fills) through a native field.
         await this.cdp.send("Input.insertText", { text: ev.text ?? "" }, this.session);
@@ -879,6 +983,8 @@ class CdpTab implements Tab {
 
   async viewState(): Promise<ViewState> {
     const empty: ViewState = { focus: null, fields: [] };
+    // While a dialog is open the page's scripts are paused: asking the page anything would hang.
+    if (this.openDialog) return { ...empty, dialog: this.openDialog };
     return (
       (await this.b.scripts
         .inspect<ViewState>(
@@ -981,12 +1087,18 @@ export class LocalPool implements BrowserPool {
     const key = `${userId}:${profile}`;
     let b = this.browsers.get(key);
     if (!b) {
-      b = (async () => {
+      const made: Promise<ManagedBrowser> = (async () => {
         const m = new ManagedBrowser();
         m.signInProviders = [...SIGN_IN_PROVIDERS, ...(this.opts.extraSignInProviders ?? []).map((h) => h.toLowerCase())];
+        // A Chrome that died is forgotten, so the next tab launches a new one instead of failing forever.
+        m.onDead = () => {
+          if (this.browsers.get(key) === made) this.browsers.delete(key);
+          void m.closeFn?.().catch(() => {});
+        };
         await m.start(this.launcher, userId, profile);
         return m;
       })();
+      b = made;
       b.catch(() => this.browsers.delete(key));
       this.browsers.set(key, b);
     }

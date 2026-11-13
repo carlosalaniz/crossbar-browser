@@ -77,7 +77,15 @@ export async function callTool(s: Services, a: AgentSession, name: string, rawAr
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const args = parsed.data as Record<string, any>;
   try {
-    return await dispatch(s, a, name as ToolName, args);
+    const result = await dispatch(s, a, name as ToolName, args);
+    // What happened on the page meanwhile (a dialog Crossbar answered, a crash, a file picker), so the agent
+    // knows why the page looks the way it does.
+    const notes = a.drainNotes();
+    if (!notes.length) return result;
+    if (result.state === "ok" && result.data && typeof result.data === "object" && !Array.isArray(result.data)) return { ...result, data: { ...(result.data as object), pageEvents: notes } };
+    if (result.state === "error") return { ...result, message: `${result.message} Meanwhile: ${notes.join(" ")}` };
+    if (result.state === "denied" || result.state === "blocked") return { ...result, reason: `${result.reason} Meanwhile: ${notes.join(" ")}` };
+    return result;
   } catch (e) {
     if (e instanceof TicketError) return { state: "denied", reason: e.message };
     return { state: "error", message: (e as Error).message };

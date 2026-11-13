@@ -22,6 +22,8 @@ type Kind = "text" | "password" | "otp" | "frame";
 interface ViewState {
   focus: (PageBox & { kind: Kind; area: PageBox | null }) | null;
   fields: Array<PageBox & { kind: Exclude<Kind, "frame"> }>;
+  /** A dialog the page opened (alert, confirm, prompt, leave-page). Chrome draws it outside the page, so the stream doesn't show it. */
+  dialog?: { type: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string };
 }
 interface Claim {
   tab: string;
@@ -141,7 +143,40 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     phone ? h("button", { class: "tk-btn", type: "button", onclick: () => (z > 1.01 ? wholePage() : magnify()) }, "🔍 Zoom") : null,
     h("button", { class: "tk-btn", type: "button", onclick: () => (more.hidden = !more.hidden) }, "More"),
   );
-  const dock = h("div", { class: "tk-dock" }, err, typingBar, more, footer);
+  // The page's dialogs (alert, confirm, "leave this page?"): Chrome draws them outside the page, so the stream
+  // never shows them; they're shown here, with the page's text quoted as the page's.
+  const dialogText = h("p", { class: "tk-dialog-text" });
+  const dialogInput = h("input", { class: "input", hidden: true, "aria-label": "Answer" }) as HTMLInputElement;
+  const dialogOk = h("button", { class: "tk-btn primary", type: "button", onclick: () => answerDialog(true) }, "OK");
+  const dialogCancel = h("button", { class: "tk-btn", type: "button", onclick: () => answerDialog(false) }, "Cancel");
+  const dialogSheet = h(
+    "div",
+    { class: "tk-dialog", role: "alertdialog", "aria-label": "The page is asking", hidden: true },
+    h("div", { class: "tk-dialog-head" }, "The page says (its own words):"),
+    dialogText,
+    dialogInput,
+    h("div", { class: "tk-row" }, dialogCancel, dialogOk),
+  );
+  let dialogShown: string | null = null;
+  const showDialog = (dlg: ViewState["dialog"]) => {
+    const key = dlg ? `${dlg.type}:${dlg.message}` : null;
+    if (key === dialogShown) return;
+    dialogShown = key;
+    dialogSheet.hidden = !dlg;
+    if (!dlg) return;
+    dialogText.textContent = `“${dlg.message}”`;
+    dialogInput.hidden = dlg.type !== "prompt";
+    dialogInput.value = dlg.defaultPrompt ?? "";
+    dialogCancel.hidden = dlg.type === "alert";
+    dialogOk.textContent = dlg.type === "beforeunload" ? "Leave page" : "OK";
+    dialogCancel.textContent = dlg.type === "beforeunload" ? "Stay" : "Cancel";
+  };
+  const answerDialog = (accept: boolean) => {
+    const text = dialogInput.hidden ? undefined : dialogInput.value;
+    showDialog(undefined);
+    void send({ type: "dialog", accept, ...(text !== undefined ? { text } : {}) });
+  };
+  const dock = h("div", { class: "tk-dock" }, err, dialogSheet, typingBar, more, footer);
   const root = h(
     "div",
     { class: phone ? "tk tk-phone" : "tk" },
@@ -317,7 +352,11 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     const t = await api<{ takeoverTab: string | null }>("GET", `/api/tickets/${id}`).catch(() => null);
     if (t?.takeoverTab && t.takeoverTab !== current) switchTab(t.takeoverTab);
   };
-  const followTimer = setInterval(follow, 1000);
+  const followTimer = setInterval(() => {
+    void follow();
+    // A dialog can open with no input from the person (a timer on the page): look for it.
+    void refreshView();
+  }, 1000);
   d.onCleanup(() => clearInterval(followTimer));
   const switchTab = (tab: string) => {
     current = tab;
@@ -363,6 +402,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
 
   // ---- what has focus in the page ----
   const applyView = (v: ViewState) => {
+    showDialog(v.dialog);
     const hadFields = fields.length > 0;
     fields = v.fields;
     if (phone && magnified && !movedByHand && !hadFields && fields.length && !v.focus) magnify();

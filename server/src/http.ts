@@ -330,9 +330,15 @@ export function createApp(o: AppOptions) {
       // Logging in always happens in the personal profile: that's the opt-in to "read as you".
       const profile = f.kind === "login" ? "personal" : f.profile;
       const entry = { tab: null as unknown as Tab, base: null as unknown as Tab, session: a, lastSeen: Date.now() };
-      const tab = await a.takeoverTab(profile, f.url, (current) => {
-        entry.tab = current;
-      });
+      // Sign-ins and payment checks load without ad blocking (fraud scripts, audit S22); other takeovers keep it.
+      const tab = await a.takeoverTab(
+        profile,
+        f.url,
+        (current) => {
+          entry.tab = current;
+        },
+        { pauseAdblock: f.kind === "login" || f.kind === "verification" },
+      );
       entry.tab = tab;
       entry.base = tab;
       takeovers.set(t.id, entry);

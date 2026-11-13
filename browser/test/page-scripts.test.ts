@@ -19,13 +19,10 @@ describe("page bundle", () => {
     assert.doesNotMatch(b.cosmeticCss("https://www.other.com/"), /promo-strip/);
   });
 
-  test("Crossbar's own rules block Ad-Shield's ad recovery from other sites, on every domain it rotates to (live: solsticeforum.com)", () => {
+  test("Ad-Shield isn't blocked by Crossbar's own rules: blocking or stubbing its loader breaks the page (live: solsticeforum.com)", () => {
     const b = AdBlocker.fromLists([EXTRA_FILTERS]);
-    const block = (url: string, page: string, resourceType = "Script") => b.shouldBlock({ url, method: "GET", resourceType, targetType: "page" } as never, page);
-    for (const host of ["stg.html-load.com", "stg.content-loader.com", "2.stg.content-loader.com", "x.css-load.com", "x.img-load.com"]) {
-      assert.equal(block(`https://${host}/script/www.solsticeforum.com.js`, "https://www.solsticeforum.com/threads/x/"), true, host);
-    }
-    assert.equal(block("https://0.stg.content-loader.com/session/a/b", "https://www.solsticeforum.com/", "XHR"), true);
+    const blocked = (url: string) => b.check({ url, method: "GET", resourceType: "Script", targetType: "page" } as never, "https://www.solsticeforum.com/threads/x/").block;
+    for (const host of ["html-load.com", "stg.content-loader.com", "fb.html-load.com"]) assert.equal(blocked(`https://${host}/loader.min.js`), false, host);
   });
 
   test("scroll caps are clamped to the server ceiling", () => {
@@ -172,7 +169,7 @@ describe("scroll and extract", { skip: skipReason }, () => {
 });
 
 describe("ad blocking", { skip: skipReason }, () => {
-  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner", "a.test##.r1:has-text(Sponsored)"]);
+  const blocker = AdBlocker.fromLists(["||a.test^*/ads/", "/tracker/*", "##.ad-banner", "a.test##.r1:has-text(Sponsored)", "||b.test^$script,third-party,redirect=noopjs", "/^https?:\\/\\/b\\.test(?::\\d+)?\\/script\\/[-.a-z]+\\.js$/$script,3p,header=x-length"]);
   let env: Env;
   let scripts: PageScripts;
   before(async () => {
@@ -181,9 +178,15 @@ describe("ad blocking", { skip: skipReason }, () => {
     const pageUrls = new Map<string, string>();
     env.gate["policy" as never] = ((r: Parameters<typeof holdNonGet>[0]) => {
       if (r.resourceType === "Document" && r.targetType === "page") pageUrls.set(r.sessionId, r.url);
-      if (blocker.shouldBlock(r, pageUrls.get(r.sessionId) ?? r.url)) return { verdict: "deny", rule: "blocked_ad" };
-      return holdNonGet(r);
+      const page = pageUrls.get(r.rootSessionId) ?? r.url;
+      // The /script/ loaders are left to the header rule, as on the live site (the redirect rule is for loader.min.js).
+      const ad = r.url.includes("/script/") ? { block: false } : blocker.check(r, page);
+      if (ad.block) return { verdict: "deny", rule: "blocked_ad", ...("respond" in ad && ad.respond ? { respond: ad.respond } : {}) };
+      const v = holdNonGet(r);
+      return v === "allow" && blocker.responseRules(r, page).length ? { verdict: "allow", inspectResponse: true } : v;
     }) as never;
+    (env.gate["opts" as never] as { responsePolicy: unknown }).responsePolicy = (r: Parameters<typeof holdNonGet>[0], _status: number, headers: Array<{ name: string; value: string }>) =>
+      blocker.blockedByHeaders(blocker.responseRules(r, pageUrls.get(r.rootSessionId) ?? r.url), headers) ? { verdict: "deny", rule: "blocked_ad" } : "allow";
     scripts = new PageScripts(env.browser.cdp);
   });
   after(() => env?.close());
@@ -209,6 +212,21 @@ describe("ad blocking", { skip: skipReason }, () => {
     assert.equal(await evaluate(env, s, "document.querySelectorAll('style').length"), styles);
     assert.equal(await evaluate(env, s, "document.getElementById('cb-cosmetic')"), null);
     assert.match(r.content, /Real content/);
+  });
+
+  test("a redirect= rule answers with a stand-in: the page sees its loader load, the real one never runs (live: Ad-Shield)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/pages/adshield"));
+    await sleep(500);
+    assert.equal(await evaluate(env, s, "document.getElementById('log').textContent"), "loaded a stand-in");
+    assert.equal(env.site.hits.filter((h) => h.path.startsWith("/loader.min.js")).length, 0, "the real loader was fetched");
+  });
+
+  test("a header= rule blocks a loader known only by its response header; the same-shaped plain script runs (ADR 0036, live: Ad-Shield)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/pages/header-loader"));
+    for (let i = 0; i < 30 && String(await evaluate(env, s, "document.getElementById('log').textContent")).includes("?"); i++) await sleep(100);
+    assert.equal(await evaluate(env, s, "document.getElementById('log').textContent"), "loader blocked, plain ran");
+    assert.equal(await evaluate(env, s, "window.__adshield"), undefined, "the loader's code ran");
+    assert.ok(env.gate.seen.some((x) => x.request.url.includes("/script/www.a.test.js")));
   });
 
   test("extended rules (uBO :has-text) leave sponsored results out of what the agent reads; the live page is untouched (ADR 0034)", async () => {

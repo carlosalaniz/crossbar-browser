@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Everything that waits for a person: dialogs, a file picker, a "leave this page?" guard, a page that closes
+     itself. In the container nobody sees Chrome's own windows, so each one used to stop the agent (live:
+     Ad-Shield's confirm on solsticeforum.com, 13 Nov 2026). -->
+<html><head><meta charset="utf-8"><title>Dialogs</title></head>
+<body>
+<p id="log">nothing yet</p>
+<button onclick="alert('Saved!'); log('alert closed')">Show message</button>
+<button onclick="log('confirm: ' + confirm('Delete everything?'))">Delete everything</button>
+<button onclick="log('prompt: ' + prompt('Your name?', 'Ana'))">Ask name</button>
+<button onclick="window.onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ''; }; log('guard on')">Unsaved changes</button>
+<label>Upload <input type="file" id="file" onchange="log('picked')"></label>
+<button onclick="setTimeout(() => confirm('A question nobody asked for'), 200); log('timer set')">Later question</button>
+<script>function log(t) { document.getElementById('log').textContent = t; }</script>
+</body></html>

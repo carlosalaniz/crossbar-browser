@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Ad-Shield's per-site loader (live, solsticeforum.com: stg.content-loader.com/script/www.<site>.js). Its
+     address changes on every load; only a response header identifies it (uBO's header=x-length rule). -->
+<html><head><meta charset="utf-8"><title>Header loader</title></head>
+<body>
+<p id="log">waiting</p>
+<script>
+  const done = {};
+  const load = (name, path) => {
+    const s = document.createElement('script');
+    s.src = location.protocol + '//b.test:' + location.port + path;
+    s.onload = () => { done[name] = 'ran'; show(); };
+    s.onerror = () => { done[name] = 'blocked'; show(); };
+    document.head.appendChild(s);
+  };
+  const show = () => { document.getElementById('log').textContent = `loader ${done.loader ?? '?'}, plain ${done.plain ?? '?'}`; };
+  load('loader', '/script/www.a.test.js');
+  load('plain', '/script/plain.js');
+</script>
+</body></html>

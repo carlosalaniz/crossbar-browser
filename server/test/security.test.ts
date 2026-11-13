@@ -494,18 +494,59 @@ describe("challenges (ADR 0001)", () => {
     await t.close();
   });
 
-  test("ad blocking pauses while a person has control (audit S22)", async () => {
-    const adblock = { check: (r: { url: string }) => ({ block: r.url.includes("/ads/") }), cosmeticCss: () => "", extendedSelectors: () => [] } as never;
-    const t = await startTestApp({ adblock });
+  // A stub with AdBlocker's shape: /ads/ blocked by address; /script/ only by an x-length response header.
+  const adblockStub = () =>
+    ({
+      check: (r: { url: string }) => ({ block: r.url.includes("/ads/") }),
+      responseRules: (r: { url: string }) => (r.url.includes("/script/") ? [{ header: "x-length" }] : []),
+      blockedByHeaders: (rules: unknown[], headers: Array<{ name: string }>) => (rules.length && headers.some((h) => h.name.toLowerCase() === "x-length") ? rules[0] : undefined),
+      cosmeticCss: () => "",
+      extendedSelectors: () => [],
+    }) as never;
+
+  test("ad blocking pauses while a person signs in (audit S22), and keeps running in other takeovers (ADR 0036)", async () => {
+    const t = await startTestApp({ adblock: adblockStub() });
     const pool = t.pool as FakePool;
     pool.pages.set("https://www.reddit.com/login/", { title: "Log in", facts: { hasPasswordField: true, textLength: 300 } });
     const c = await t.mcpClient(t.token("alice", "read"));
-    const r = await c.call("open", { url: "https://www.reddit.com/login/" });
+    const login = await c.call("open", { url: "https://www.reddit.com/login/" });
     const tab = [...pool.tabs].reverse()[0]!;
     assert.equal(tab.simulate({ method: "GET", url: "https://cdn.example/ads/sensor.js", resourceType: "Script" }).rule, "blocked_ad");
-    await t.api("POST", `/api/tickets/${r.ticket!.id}/claim`, { user: "alice" });
+    await t.api("POST", `/api/tickets/${login.ticket!.id}/claim`, { user: "alice" });
     const personal = pool.tabs.find((x) => x.profile === "personal")!;
     assert.equal(personal.simulate({ method: "GET", url: "https://cdn.example/ads/sensor.js", resourceType: "Script" }).rule, "human_takeover");
+    await t.close();
+
+    // A captcha takeover: the person sees the page without ads (live: every ad on solsticeforum.com showed).
+    const t2 = await startTestApp({ adblock: adblockStub() });
+    const pool2 = t2.pool as FakePool;
+    pool2.pages.set("https://forum.example/thread", { title: "Just a moment...", facts: { textLength: 200 } });
+    const wall = await (await t2.mcpClient(t2.token("alice", "read"))).call("open", { url: "https://forum.example/thread" });
+    assert.equal(wall.state, "blocked");
+    await t2.api("POST", `/api/tickets/${wall.ticket!.id}/claim`, { user: "alice" });
+    const held = [...pool2.tabs].reverse()[0]!;
+    assert.equal(held.simulate({ method: "GET", url: "https://cdn.example/ads/banner.js", resourceType: "Script" }).rule, "blocked_ad");
+    assert.equal(held.simulate({ method: "GET", url: "https://forum.example/app.js", resourceType: "Script" }).rule, "human_takeover");
+    await t2.close();
+  });
+
+  test("a request a header= rule could block is inspected when its response arrives; a match blocks it (ADR 0036)", async () => {
+    const t = await startTestApp({ adblock: adblockStub() });
+    const pool = t.pool as FakePool;
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: "https://forum.example/thread" });
+    const tab = [...pool.tabs].reverse()[0]!;
+    const req = (url: string) => ({ requestId: "q1", sessionId: "s1", rootSessionId: "s1", targetType: "page", targetUrl: tab.url, method: "GET", url, resourceType: "Script" as const, frameId: "f", hasPostData: false });
+    const loader = req("https://stg.content-loader.com/script/www.forum.example.js");
+    const d = tab.policy!.decide(loader);
+    assert.equal(typeof d === "string" ? d : d.verdict, "allow");
+    assert.equal(typeof d === "string" ? false : d.inspectResponse, true);
+    const plain = tab.policy!.decide(req("https://forum.example/app.js"));
+    assert.equal(typeof plain === "string" ? false : !!plain.inspectResponse, false, "only candidates pause twice");
+    const hit = tab.policy!.decideResponse!(loader, 200, [{ name: "X-Length", value: "5120" }]);
+    assert.equal(typeof hit === "string" ? hit : hit.rule, "blocked_ad");
+    const miss = tab.policy!.decideResponse!(loader, 200, [{ name: "content-type", value: "text/javascript" }]);
+    assert.equal(typeof miss === "string" ? miss : miss.verdict, "allow");
     await t.close();
   });
 

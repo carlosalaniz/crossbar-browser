@@ -23,6 +23,8 @@ export const NARROW_WINDOW = { width: 500, height: 1170 };
 
 export interface TabPolicy {
   decide(r: GateRequest): Verdict | Decision;
+  /** A response paused because decide set inspectResponse (ad blocking by response headers, ADR 0036). */
+  decideResponse?(r: GateRequest, status: number, headers: Array<{ name: string; value: string }>): Verdict | Decision;
   onHeld?(h: HeldRequest): void;
   onRequest?(r: GateRequest, verdict: Verdict, rule?: string): void;
 }
@@ -249,6 +251,7 @@ class ManagedBrowser {
     this.version = (await this.cdp.send("Browser.getVersion")).product;
     this.gate = new NetworkGate(this.cdp, {
       policy: (r) => this.route(r),
+      responsePolicy: (r, status, headers) => this.tabsBySession.get(r.rootSessionId)?.policy?.decideResponse?.(r, status, headers) ?? "allow",
       onHeld: (h) => this.tabsBySession.get(h.request.rootSessionId)?.policy?.onHeld?.(h),
       onRequest: (r, v, rule) => this.tabsBySession.get(r.rootSessionId)?.policy?.onRequest?.(r, v, rule),
       onAttach: (t) => this.onAttach(t),

@@ -186,6 +186,8 @@ export class AgentSession {
   }
   /** Tabs a person is driving during takeover: the gate lets them act, still logging everything. */
   readonly takeoverTabs = new Set<string>();
+  /** Takeover tabs (and their popups) loading without ad blocking: sign-ins and payment checks (audit S22). */
+  readonly adblockPausedTabs = new Set<string>();
   lastUsed = Date.now();
   private readonly offs: Array<() => void> = [];
 
@@ -235,19 +237,22 @@ export class AgentSession {
   }
 
   /** For takeover: the tab for a profile, opened at a URL if it doesn't exist yet. */
-  async takeoverTab(profile: Profile, url: string, onCurrent?: (tab: Tab) => void): Promise<Tab> {
+  async takeoverTab(profile: Profile, url: string, onCurrent?: (tab: Tab) => void, opts: { pauseAdblock?: boolean } = {}): Promise<Tab> {
     const existing = this.tabs[profile];
     const tab = existing ?? (await this.ensureTab(profile));
     this.takeoverTabs.add(tab.id);
+    if (opts.pauseAdblock) this.adblockPausedTabs.add(tab.id);
     // A "Sign in with…" window opened during takeover joins it; when it closes, control returns to the tab.
     tab.allowPopups(true);
     const offPopup = tab.onPopup((popup) => {
       this.popups.add(popup);
       this.takeoverTabs.add(popup.id);
+      if (opts.pauseAdblock) this.adblockPausedTabs.add(popup.id);
       onCurrent?.(popup);
       popup.onClose(() => {
         this.popups.delete(popup);
         this.takeoverTabs.delete(popup.id);
+        this.adblockPausedTabs.delete(popup.id);
         onCurrent?.(tab);
       });
     });
@@ -262,11 +267,13 @@ export class AgentSession {
 
   async endTakeover(tab: Tab): Promise<void> {
     this.takeoverTabs.delete(tab.id);
+    this.adblockPausedTabs.delete(tab.id);
     tab.allowPopups(false);
     this.takeoverCleanup.get(tab.id)?.();
     this.takeoverCleanup.delete(tab.id);
     for (const p of this.popups) {
       this.takeoverTabs.delete(p.id);
+      this.adblockPausedTabs.delete(p.id);
       await p.close().catch(() => {});
     }
     this.popups.clear();
@@ -317,6 +324,7 @@ export class AgentSession {
   private policyFor(tab: Tab): TabPolicy {
     return {
       decide: (r) => this.decide(tab, r),
+      decideResponse: (r, _status, headers) => this.decideResponse(tab, r, headers),
       onHeld: (h) => this.onHeld(tab, h),
       onRequest: (r, verdict, rule) => this.onRequest(tab, r, verdict, rule),
     };
@@ -333,7 +341,42 @@ export class AgentSession {
     return sha256(`${r.method}|${base}|${op ?? ""}`).slice(0, 32);
   }
 
+  /**
+   * Ad blocking applies to everything but top-level pages, on sites where it's on. While a person has control
+   * for a sign-in or a payment check, the page loads as in their own browser: blocking a bank's fraud scripts
+   * is how logins fail (audit S22). Other takeovers keep it, or the person sees every ad (ADR 0036).
+   */
+  private adblockApplies(tab: Tab, r: GateRequest): boolean {
+    if (!this.s.adblock || this.adblockPausedTabs.has(tab.id)) return false;
+    if (r.resourceType === "Document" && r.sessionId === r.rootSessionId) return false;
+    const pageDomain = this.pageDomain.get(tab.profile);
+    return (pageDomain ? this.s.sites.resolve(this.userId, pageDomain) : this.s.sites.resolve(this.userId, r.url)).adblock;
+  }
+
+  private adSource(tab: Tab, r: GateRequest): string {
+    const pageDomain = this.pageDomain.get(tab.profile);
+    return pageDomain ? `https://${pageDomain}/` : r.url;
+  }
+
   decide(tab: Tab, r: GateRequest): Decision {
+    const d = this.decideRequest(tab, r);
+    // A page a person opens while in control gets the same cosmetic hiding an agent's page gets.
+    if (d.verdict === "allow" && this.takeoverTabs.has(tab.id) && !this.adblockPausedTabs.has(tab.id) && r.resourceType === "Document" && r.sessionId === r.rootSessionId && r.frameId === tab.mainFrameId) {
+      for (const ms of [2500, 8000]) setTimeout(() => void this.afterLoad(tab).catch(() => {}), ms).unref?.();
+    }
+    // An allowed request that one of uBO's header= rules could block: decided again when its response arrives.
+    if (d.verdict === "allow" && this.adblockApplies(tab, r) && this.s.adblock!.responseRules(r, this.adSource(tab, r)).length) return { ...d, inspectResponse: true };
+    return d;
+  }
+
+  decideResponse(tab: Tab, r: GateRequest, headers: Array<{ name: string; value: string }>): Decision {
+    if (!this.adblockApplies(tab, r)) return { verdict: "allow" };
+    const ab = this.s.adblock!;
+    const hit = ab.blockedByHeaders(ab.responseRules(r, this.adSource(tab, r)), headers);
+    return hit ? { verdict: "deny", rule: "blocked_ad" } : { verdict: "allow" };
+  }
+
+  private decideRequest(tab: Tab, r: GateRequest): Decision {
     const host = hostOf(r.url);
     if (!/^https?:$/.test(safeProtocol(r.url))) {
       // data:, blob: and friends stay inside the browser.
@@ -343,11 +386,8 @@ export class AgentSession {
     const domain = registrable(host);
     const site = this.s.sites.resolve(this.userId, r.url);
     const pageDomain = this.pageDomain.get(tab.profile);
-    const pageSite = pageDomain ? this.s.sites.resolve(this.userId, pageDomain) : site;
-    // While a person has control, the page loads as in their own browser: blocking a site's fraud or
-    // challenge scripts during a login is how logins fail (audit S22).
-    if (this.s.adblock && pageSite.adblock && !this.takeoverTabs.has(tab.id) && !(r.resourceType === "Document" && r.sessionId === r.rootSessionId)) {
-      const ad = this.s.adblock.check(r, pageDomain ? `https://${pageDomain}/` : r.url);
+    if (this.adblockApplies(tab, r)) {
+      const ad = this.s.adblock!.check(r, pageDomain ? `https://${pageDomain}/` : r.url);
       if (ad.block) return { verdict: "deny", rule: "blocked_ad", ...(ad.respond ? { respond: ad.respond } : {}) };
     }
     if (this.takeoverTabs.has(tab.id)) {

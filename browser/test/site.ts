@@ -56,6 +56,14 @@ export async function startSite(opts: { host?: string; port?: number } = {}): Pr
       // A browser sign-in box (HTTP Basic): Chrome's own login window, which nobody is there to answer.
       case "/basic-auth":
         return send(401, html("needs sign-in"), "text/html", { "www-authenticate": 'Basic realm="crossbar test"' });
+      // Ad-Shield's per-site loader (live: stg.content-loader.com/script/<site>.js): known only by a response
+      // header its server sends (uBO's header=x-length). The plain script has the same shape and no header.
+      case "/script/www.a.test.js":
+        record(req);
+        return send(200, "window.__adshield = 1;", "text/javascript", { "x-length": "1234" });
+      case "/script/plain.js":
+        record(req);
+        return send(200, "window.__plain = 1;", "text/javascript");
       // Ad-Shield's loader stand-in: the test expects the gate to answer it, never this server.
       case "/loader.min.js":
         record(req);

@@ -48,8 +48,19 @@ form { display: flex; flex-direction: column; gap: 10px; }
 .row.between { justify-content: space-between; flex-wrap: nowrap; }
 .row .input { flex: 1; min-width: 0; }
 .card { display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
-.card.ticket { display: flex; gap: 12px; align-items: center; }
-.card.ticket .icon { font-size: 22px; width: 32px; text-align: center; }
+.card.ticket { display: flex; flex-direction: column; gap: 2px; }
+.card.ticket .kind { font-weight: 600; color: var(--accent); }
+.card.ticket.challenge .kind { color: var(--warn); }
+.card.ticket.proposal .kind { color: var(--danger); }
+div.stack { display: flex; flex-direction: column; gap: 8px; }
+.section { margin: 8px 0 0; }
+h2.section { font-size: 20px; }
+.background { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.background .section { color: var(--muted); }
+.card.bg-group { background: transparent; }
+.card.bg-group summary { cursor: pointer; margin-top: 6px; }
+.bg-list { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
+.tech summary { cursor: pointer; }
 .card.ticket.challenge { border-left: 4px solid var(--warn); }
 .card.ticket.approval { border-left: 4px solid var(--accent); }
 .card.ticket.proposal { border-left: 4px solid var(--danger); }

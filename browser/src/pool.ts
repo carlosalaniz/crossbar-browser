@@ -3,11 +3,11 @@
 // One Chromium per (user, profile). One gate per Chromium; requests are routed to the tab they belong to.
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import type { CdpConnection } from "./cdp.ts";
 import { NetworkGate, type Decision, type GateRequest, type HeldRequest, type Verdict, type Attached } from "./gate.ts";
 import { launchChrome, type LaunchOptions } from "./launch.ts";
-import { PageScripts, type ControlMatch, type ControlRole, type ExtractParams, type ExtractResult } from "./page-scripts/index.ts";
+import { PageScripts, type ControlMatch, type ExtractParams, type ExtractResult } from "./page-scripts/index.ts";
 export type { ControlMatch, ControlRole } from "./page-scripts/index.ts";
 import { scrollAndExtract, type ScrollOptions, type ScrollResult } from "./page-scripts/scroll.ts";
 import { typeInto, SIGN_IN_PROVIDERS } from "./input-guard.ts";
@@ -110,14 +110,18 @@ export interface Tab {
   /** The visible element whose text matches (exact first, then partial), given a ref; null if none. */
   findByText(text: string, nth?: number): Promise<{ ref: string; text: string } | null>;
   /** Controls whose name matches, best first, with whether a click can reach them (see page.ts findControls). */
-  findControls(query: string, opts?: { role?: ControlRole | "any"; limit?: number; textFallback?: boolean }): Promise<ControlMatch[]>;
-  /** Clicks the element; returns what was under the click (for approval cards). */
-  click(ref: string): Promise<{ tag: string; text: string } | void>;
+  findControls(query: string, opts?: { role?: string; limit?: number; textFallback?: boolean; within?: string }): Promise<ControlMatch[]>;
+  /** Clicks the element; returns what was under the click (for approval cards) and what the click is for (ADR 0030). */
+  click(ref: string, onPress?: (el: { text: string; intent: "open" | "act" }) => void): Promise<{ tag: string; text: string; intent?: "open" | "act" } | void>;
+  /** Brings the element into sight, inside its scrolling box too. */
+  reveal(ref: string): Promise<{ inView: boolean }>;
+  /** A JPEG of the element (brought into sight first), or of the visible page; base64. */
+  look(ref?: string): Promise<{ jpeg: string; width: number; height: number }>;
   type(ref: string, text: string, submit: boolean): Promise<void>;
   scroll(opts: ScrollOptions): Promise<ScrollResult>;
   facts(): Promise<PageFacts>;
   domTokens(): Promise<{ classes: string[]; ids: string[]; hrefs: string[] }>;
-  applyCosmetics(css: string): Promise<void>;
+  applyCosmetics(css: string, extended?: unknown[]): Promise<void>;
   emulate(device: DeviceKind): Promise<void>;
   startScreencast(onFrame: (jpegBase64: string, meta: FrameMeta) => void, opts?: { maxWidth?: number; maxHeight?: number; fps?: number }): Promise<void>;
   stopScreencast(): Promise<void>;
@@ -136,18 +140,26 @@ export interface Tab {
 export interface BrowserPool {
   openTab(userId: string, profile: Profile): Promise<Tab>;
   closeUser(userId: string): Promise<void>;
+  /** Stops the user's browsers and deletes both profiles: cookies, logins, storage, cache, history. */
+  clearData(userId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 /** How a pool gets a CDP connection to a Chromium for (user, profile). Local launch or the browser container. */
-export type Launcher = (userId: string, profile: Profile) => Promise<{ cdp: CdpConnection; close(): Promise<void> }>;
+export type Launcher = ((userId: string, profile: Profile) => Promise<{ cdp: CdpConnection; close(): Promise<void> }>) & {
+  /** Deletes a stopped profile's directory, so its next launch starts empty. */
+  wipe?(userId: string, profile: Profile): Promise<void>;
+};
 
 export function localLauncher(opts: { dataDir: string } & Omit<LaunchOptions, "userDataDir">): Launcher {
-  return async (userId, profile) => {
-    const dir = join(opts.dataDir, "profiles", userId.replace(/[^\w-]/g, "_"), profile);
+  const dirOf = (userId: string, profile: Profile) => join(opts.dataDir, "profiles", userId.replace(/[^\w-]/g, "_"), profile);
+  const launch: Launcher = async (userId, profile) => {
+    const dir = dirOf(userId, profile);
     seedPreferences(dir);
     return launchChrome({ ...opts, userDataDir: dir });
   };
+  launch.wipe = async (userId, profile) => rmSync(dirOf(userId, profile), { recursive: true, force: true });
+  return launch;
 }
 
 /** Third-party cookies blocked in both profiles (Access Model L2); Chrome's own password saving off. */
@@ -186,6 +198,10 @@ interface Located {
   vh: number;
   tag: string;
   text: string;
+  /** When out of sight: the scrolling box to turn the wheel over (null: the page). */
+  scroller: { x: number; y: number; w: number; h: number } | null;
+  /** What a click on it is for (ADR 0030). */
+  intent: "open" | "act";
 }
 export const DESKTOP = { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false };
 export const MOBILE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
@@ -386,13 +402,19 @@ class CdpTab implements Tab {
     for (const cb of this.closeCbs) cb();
   }
 
+  /**
+   * A full load, or a move within the same document (a #fragment route in a single-page app), which fires no
+   * load event: open() of Gmail's #settings/themes waited out the whole 15 s (live, 13 Nov 2026).
+   */
   private async waitLoad(timeoutMs = 15000): Promise<void> {
     await new Promise<void>((resolve) => {
       const t = setTimeout(done, timeoutMs);
-      const off = this.cdp.on("Page.loadEventFired", (_p, s) => s === this.session && done());
+      const offLoad = this.cdp.on("Page.loadEventFired", (_p, s) => s === this.session && done());
+      const offSame = this.cdp.on("Page.navigatedWithinDocument", (p, s) => s === this.session && (p as { frameId?: string }).frameId === this.mainFrameId && done());
       function done() {
         clearTimeout(t);
-        off();
+        offLoad();
+        offSame();
         resolve();
       }
     });
@@ -468,12 +490,15 @@ class CdpTab implements Tab {
     type L = Located | null;
     let at = await this.b.scripts.call<L>(this.session, "locateRef", { ref });
     if (!at) throw new Error(`No visible element with ref ${ref}. Call read again; refs change when the page changes.`);
-    // Off screen: scroll toward it with the wheel, like a person, in a few steps (audit S06).
-    for (let i = 0; i < 8 && !at.inView; i++) {
-      const dy = Math.max(-at.vh * 0.8, Math.min(at.vh * 0.8, at.y - at.vh / 2));
-      const dx = at.x < 0 || at.x > at.vw ? Math.max(-at.vw * 0.8, Math.min(at.vw * 0.8, at.x - at.vw / 2)) : 0;
+    // Out of sight: scroll toward it with the wheel, like a person, in a few steps (audit S06). Inside a
+    // scrolling box (a dialog's list), the wheel turns over that box, as a person's pointer would be.
+    for (let i = 0; i < 12 && !at.inView; i++) {
+      const box = at.scroller ?? { x: at.vw / 2, y: at.vh / 2, w: at.vw, h: at.vh };
+      const dy = Math.max(-box.h * 0.8, Math.min(box.h * 0.8, at.y - box.y));
+      const dx = at.x < box.x - box.w / 2 || at.x > box.x + box.w / 2 ? Math.max(-box.w * 0.8, Math.min(box.w * 0.8, at.x - box.x)) : 0;
       if (Math.abs(dy) < 2 && Math.abs(dx) < 2) break;
-      const from = this.pointer ?? { x: at.vw / 2, y: at.vh / 2 };
+      const from = at.scroller ? { x: box.x + rand(-0.2, 0.2) * box.w, y: box.y + rand(-0.2, 0.2) * box.h } : (this.pointer ?? { x: at.vw / 2, y: at.vh / 2 });
+      if (at.scroller) await this.moveTo(from.x, from.y);
       await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: from.x, y: from.y, deltaX: dx, deltaY: dy }, this.session);
       await sleep(rand(90, 180));
       const next = await this.b.scripts.call<L>(this.session, "locateRef", { ref });
@@ -505,33 +530,100 @@ class CdpTab implements Tab {
     this.pointer = { x, y };
   }
 
-  async click(ref: string): Promise<{ tag: string; text: string }> {
-    const at = await this.locate(ref);
+  /** `onPress` runs right before the press: what the page sends on mousedown or keydown is already this click's. */
+  async click(ref: string, onPress?: (el: { text: string; intent: "open" | "act" }) => void): Promise<{ tag: string; text: string; intent: "open" | "act" }> {
+    type Check = { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true; outside?: true };
+    let at = await this.locate(ref);
+    let x = 0;
+    let y = 0;
     // A point inside the element, not its exact center every time (audit S05).
-    const x = at.x + rand(-0.25, 0.25) * Math.min(at.w, 200);
-    const y = at.y + rand(-0.2, 0.2) * Math.min(at.h, 60);
+    const aim = () => {
+      x = at.x + rand(-0.25, 0.25) * Math.min(at.w, 200);
+      y = at.y + rand(-0.2, 0.2) * Math.min(at.h, 60);
+    };
+    aim();
     // Access Model L4: the element under the click point must be the one the agent chose (no overlay).
-    const verify = () => this.b.scripts.call<{ ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null }>(this.session, "checkPoint", { ref, x, y });
+    const verify = () => this.b.scripts.call<Check>(this.session, "checkPoint", { ref, x, y });
     let check = await verify();
+    // Its own scrolling box is there instead: it's still out of its list, so bring it to the middle.
+    if (!check.ok && check.clipped) {
+      at = (await this.b.scripts.call<Located | null>(this.session, "locateRef", { ref, reveal: true })) ?? at;
+      aim();
+      check = await verify();
+    }
     if (check.ok) {
       await this.moveTo(x, y);
       await sleep(rand(40, 120));
       // Hovering can open menus or move things: check the final point again right before pressing.
       check = await verify();
     }
+    // Past the window's edge where no scroll reaches (Gmail's theme dialog is wider than the narrow window,
+    // live 12 Nov 2026): a person would Tab to it and press Enter. Focus it and press Enter.
+    if (!check.ok && check.outside && (await this.pressByKeyboard(ref, () => onPress?.({ text: at.text, intent: at.intent })))) return { tag: at.tag, text: at.text, intent: at.intent };
     if (!check.ok) {
       const c = check.covering;
+      if (check.outside) throw new Error(`${ref} is outside the window (the page is wider or taller than the window and doesn't scroll there), and it can't take keyboard focus. Not clicking.`);
       throw new Error(
         c
           ? `Something else is on top of ${ref}: ${c.tag}${c.text ? ` "${c.text}"` : ""} [${c.ref}]. Not clicking. If it's a banner or dialog, close it first (click ${c.ref} or its close button), then try again.`
-          : `${ref} isn't on the page any more. Call read again.`,
+          : check.clipped
+            ? `${ref} is inside a scrolling area and couldn't be brought into view. Call scroll with ref ${ref}, then click again.`
+            : `${ref} isn't on the page any more. Call read again.`,
       );
     }
     const base = { x, y, button: "left" as const, clickCount: 1 };
+    onPress?.({ text: at.text, intent: at.intent });
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 }, this.session);
     await sleep(rand(45, 110));
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 }, this.session);
-    return { tag: at.tag, text: at.text };
+    return { tag: at.tag, text: at.text, intent: at.intent };
+  }
+
+  /** Focuses the element without scrolling and presses Enter (Space for checkboxes and switches), with real keys. */
+  private async pressByKeyboard(ref: string, onPress: () => void): Promise<boolean> {
+    const objectId = await this.b.scripts.elementHandle(this.session, ref);
+    if (!objectId) return false;
+    let how: string | null = null;
+    try {
+      const { result } = await this.cdp.send(
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: `function () {
+            if (this.matches('[disabled], [aria-disabled="true"]')) return null;
+            if (!this.matches('a[href], button, input, select, textarea, summary, [tabindex]') && !this.getAttribute('role')) return null;
+            this.focus({ preventScroll: true });
+            const a = this.getRootNode().activeElement || document.activeElement;
+            if (a !== this && !this.contains(a)) return null;
+            const role = this.getAttribute('role') || '';
+            return /^(checkbox|switch|radio|option)$/.test(role) || /^(checkbox|radio)$/.test(this.type || '') ? 'space' : 'enter';
+          }`,
+        },
+        this.session,
+      );
+      how = (result.value as string | null) ?? null;
+    } finally {
+      await this.cdp.send("Runtime.releaseObject", { objectId }, this.session).catch(() => {});
+    }
+    if (!how) return false;
+    await sleep(rand(80, 200));
+    const key =
+      how === "space"
+        ? { key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: " " }
+        : { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: "\r" };
+    onPress();
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key }, this.session);
+    await sleep(rand(45, 110));
+    const { text: _t, ...up } = key;
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...up }, this.session);
+    return true;
+  }
+
+  /** Brings the element into sight (inside its scrolling box too), with the wheel first. */
+  async reveal(ref: string): Promise<{ inView: boolean }> {
+    const at = await this.locate(ref);
+    return { inView: at.inView };
   }
 
   /** Click by text: the nth control called that which a click can reach (visible or just offscreen). */
@@ -540,7 +632,7 @@ class CdpTab implements Tab {
     return m ? { ref: m.ref!, text: m.name } : null;
   }
 
-  findControls(query: string, opts: { role?: ControlRole | "any"; limit?: number; textFallback?: boolean } = {}): Promise<ControlMatch[]> {
+  findControls(query: string, opts: { role?: string; limit?: number; textFallback?: boolean; within?: string } = {}): Promise<ControlMatch[]> {
     return this.b.scripts.call(this.session, "findControls", { query, ...opts });
   }
 
@@ -639,8 +731,8 @@ class CdpTab implements Tab {
     return this.b.scripts.call<{ classes: string[]; ids: string[]; hrefs: string[] }>(this.session, "domTokens");
   }
 
-  async applyCosmetics(css: string): Promise<void> {
-    await this.b.scripts.call(this.session, "applyCosmetics", { css });
+  async applyCosmetics(css: string, extended: unknown[] = []): Promise<void> {
+    await this.b.scripts.call(this.session, "applyCosmetics", { css, extended });
   }
 
   private emulated: DeviceKind | null = null;
@@ -730,7 +822,7 @@ class CdpTab implements Tab {
     const { cssLayoutViewport } = await this.cdp.send("Page.getLayoutMetrics", undefined, this.session);
     const first = await this.screenshot().catch(() => null);
     if (first) onFrame(first, { width: cssLayoutViewport.clientWidth, height: cssLayoutViewport.clientHeight });
-    await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.maxWidth ?? 1280, maxHeight: opts.maxHeight ?? 1280, everyNthFrame: 1 }, this.session);
+    await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.maxWidth ?? 2048, maxHeight: opts.maxHeight ?? 2048, everyNthFrame: 1 }, this.session);
   }
 
   async stopScreencast(): Promise<void> {
@@ -842,6 +934,21 @@ class CdpTab implements Tab {
     return r.data;
   }
 
+  async look(ref?: string): Promise<{ jpeg: string; width: number; height: number }> {
+    const m = await this.cdp.send("Page.getLayoutMetrics", undefined, this.session);
+    const vv = m.cssVisualViewport;
+    if (!ref) return { jpeg: await this.screenshot(), width: Math.round(vv.clientWidth), height: Math.round(vv.clientHeight) };
+    const at = await this.locate(ref);
+    // Its box, a little margin around it, kept inside the window; clip is in page coordinates.
+    const pad = 8;
+    const left = Math.max(0, at.x - at.w / 2 - pad);
+    const top = Math.max(0, at.y - at.h / 2 - pad);
+    const width = Math.max(1, Math.min(vv.clientWidth, at.x + at.w / 2 + pad) - left);
+    const height = Math.max(1, Math.min(vv.clientHeight, at.y + at.h / 2 + pad) - top);
+    const jpeg = await this.screenshot({ x: left + vv.pageX, y: top + vv.pageY, width, height });
+    return { jpeg, width: Math.round(width), height: Math.round(height) };
+  }
+
   async close(): Promise<void> {
     await this.stopScreencast();
     for (const off of this.offs) off();
@@ -888,7 +995,11 @@ export class LocalPool implements BrowserPool {
 
   private readonly idle = new Map<string, NodeJS.Timeout>();
 
+  /** Users whose browser data is being cleared: their next tab waits for it. */
+  private readonly clearing = new Map<string, Promise<void>>();
+
   async openTab(userId: string, profile: Profile): Promise<Tab> {
+    await this.clearing.get(userId)?.catch(() => {});
     const key = `${userId}:${profile}`;
     clearTimeout(this.idle.get(key));
     this.idle.delete(key);
@@ -924,6 +1035,25 @@ export class LocalPool implements BrowserPool {
       const m = await b.catch(() => null);
       m?.gate.stop();
       await m?.closeFn();
+    }
+  }
+
+  async clearData(userId: string): Promise<void> {
+    const wipe = this.launcher.wipe;
+    if (!wipe) throw new Error("This browser can't clear its data.");
+    const run = (async () => {
+      for (const p of ["anon", "personal"] as const) {
+        clearTimeout(this.idle.get(`${userId}:${p}`));
+        this.idle.delete(`${userId}:${p}`);
+      }
+      await this.closeUser(userId);
+      for (const p of ["anon", "personal"] as const) await wipe(userId, p);
+    })();
+    this.clearing.set(userId, run);
+    try {
+      await run;
+    } finally {
+      if (this.clearing.get(userId) === run) this.clearing.delete(userId);
     }
   }
 

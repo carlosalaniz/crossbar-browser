@@ -101,7 +101,7 @@ export class PageScripts {
   collectItems(sessionId: string, p: CollectParams = {}): Promise<CollectedItem[]> {
     return this.call(sessionId, "collectItems", p);
   }
-  scrollState(sessionId: string): Promise<ScrollState> {
-    return this.call(sessionId, "scrollState");
+  scrollState(sessionId: string, within?: string): Promise<ScrollState> {
+    return this.call(sessionId, "scrollState", within ? { within } : {});
   }
 }

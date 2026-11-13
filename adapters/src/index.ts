@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Site adapters: declarative site files. No changes to auth/, browser/ or proxy/ needed to add one.
+import { google } from "../google/site.ts";
 import { reddit } from "../reddit/site.ts";
 
 export interface SiteAdapter {
@@ -25,7 +26,7 @@ export interface SiteAdapter {
   readHosts?: { signedIn?: string; anonymous?: string };
 }
 
-export const ADAPTERS: SiteAdapter[] = [reddit];
+export const ADAPTERS: SiteAdapter[] = [reddit, google];
 
 function hostOf(url: string): string {
   try {
@@ -38,6 +39,13 @@ function hostOf(url: string): string {
 export function adapterFor(url: string): SiteAdapter | undefined {
   const host = hostOf(url);
   return ADAPTERS.find((a) => a.domains.some((d) => host === d || host.endsWith(`.${d}`)));
+}
+
+/** True if both registrable domains are in one adapter's domain group (or are the same domain). */
+export function sameDomainGroup(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return ADAPTERS.some((x) => x.domains.includes(a) && x.domains.includes(b));
 }
 
 /** True if this request goes to one of the adapter's telemetry endpoints. */

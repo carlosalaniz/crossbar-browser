@@ -45,8 +45,10 @@ function ok(given: string | undefined): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+const profileDir = (userId: string, profile: string) => join(profilesDir, userId.replace(/[^\w-]/g, "_"), profile === "personal" ? "personal" : "anon");
+
 async function launch(userId: string, profile: string): Promise<Running> {
-  const dir = join(profilesDir, userId.replace(/[^\w-]/g, "_"), profile === "personal" ? "personal" : "anon");
+  const dir = profileDir(userId, profile);
   mkdirSync(dir, { recursive: true });
   // This host owns the profiles; a lock left by a crashed Chromium (or an old container) is stale.
   for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) rmSync(join(dir, f), { force: true });
@@ -100,6 +102,15 @@ const server = http.createServer(async (req, res) => {
       const r = running.get(String(body.id));
       running.delete(String(body.id));
       if (r) await (await r).b.close();
+      return void res.writeHead(200).end("{}");
+    }
+    if (req.method === "POST" && req.url === "/wipe") {
+      // Clear all browser data for a profile: stop its Chromium if running, then delete the directory.
+      const id = `${body.userId}:${body.profile}`;
+      const r = running.get(id);
+      running.delete(id);
+      if (r) await (await r.catch(() => null))?.b.close();
+      rmSync(profileDir(String(body.userId), String(body.profile)), { recursive: true, force: true });
       return void res.writeHead(200).end("{}");
     }
     if (req.method === "GET" && req.url === "/healthz") return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, sandbox }));

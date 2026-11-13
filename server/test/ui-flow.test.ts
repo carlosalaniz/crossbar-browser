@@ -148,6 +148,44 @@ describe("web app flow", { skip: skipReason }, () => {
     await until(hasText("needs you to log in"));
     await clickText("Take control");
     await until(`(document.querySelector('.tk-img')?.src ?? '').startsWith('data:image/jpeg')`);
+    // The phone magnifier (ADR 0032): a desktop-width page opens zoomed in; one finger moves the view and
+    // sends the page nothing; two fingers scroll the page; hold, then drag, is a drag in the page.
+    await ev(`(() => { window.__inputs = []; const f = window.fetch; window.fetch = (u, o) => { if (String(u).includes('/input') && o && o.body) { const b = JSON.parse(o.body); window.__inputs.push(b.type + (b.buttons ? ':' + b.buttons : '')); } return f(u, o); }; return true; })()`);
+    const scale = () => ev(`Number((/scale\\(([\\d.]+)\\)/.exec(document.querySelector('.tk-stage').style.transform) ?? [0, 1])[1])`) as Promise<number>;
+    const panX = () => ev(`Number((/translate\\((-?[\\d.]+)px/.exec(document.querySelector('.tk-stage').style.transform) ?? [0, 0])[1])`) as Promise<number>;
+    await until(`/scale\\((?!1\\))/.test(document.querySelector('.tk-stage').style.transform)`);
+    assert.ok((await scale()) > 1.5, `opened at ${await scale()}x`);
+    const box = (await ev(`(() => { const r = document.querySelector('.tk-view').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 150 }; })()`)) as { x: number; y: number };
+    const touch = async (type: "touchStart" | "touchMove" | "touchEnd", pts: Array<{ x: number; y: number }>) => {
+      await ui.cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map((p, i) => ({ x: p.x, y: p.y, id: i })) }, s);
+      await sleep(40);
+    };
+    const inputs = () => ev(`window.__inputs.splice(0)`) as Promise<string[]>;
+    // One finger: the view moves, the page gets nothing.
+    const x0 = await panX();
+    await touch("touchStart", [box]);
+    for (let i = 1; i <= 5; i++) await touch("touchMove", [{ x: box.x - i * 20, y: box.y }]);
+    await touch("touchEnd", []);
+    await sleep(200);
+    assert.notEqual(await panX(), x0, "one finger didn't move the view");
+    assert.deepEqual(await inputs(), [], "one finger sent input to the page");
+    // Two fingers moving together: the page scrolls.
+    await touch("touchStart", [box, { x: box.x + 80, y: box.y }]);
+    for (let i = 1; i <= 6; i++) await touch("touchMove", [{ x: box.x, y: box.y - i * 15 }, { x: box.x + 80, y: box.y - i * 15 }]);
+    await touch("touchEnd", []);
+    await sleep(300);
+    const wheel = await inputs();
+    assert.ok(wheel.length > 0 && wheel.every((t) => t === "mouseWheel"), JSON.stringify(wheel));
+    // Hold, then drag: press, move with the button down, release.
+    await touch("touchStart", [box]);
+    await sleep(600);
+    for (let i = 1; i <= 4; i++) await touch("touchMove", [{ x: box.x + i * 15, y: box.y }]);
+    await touch("touchEnd", []);
+    await sleep(300);
+    const drag = await inputs();
+    assert.equal(drag.find((t) => t.startsWith("mouse") && t !== "mouseMoved"), "mousePressed", JSON.stringify(drag));
+    assert.ok(drag.includes("mouseMoved:1"), JSON.stringify(drag));
+    assert.equal(drag.at(-1), "mouseReleased", JSON.stringify(drag));
     // The agent is paused while a person has control.
     assert.equal((await call("read")).state, "blocked");
     // Saying "done" on the login page itself is refused by the verifier.

@@ -203,17 +203,17 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.match(((await c.call("read")).data as { content: string }).content, /referrer: none/);
   });
 
-  test("the narrow window: 500 px wide by default, full width for a site set to desktop (ADR 0028)", async () => {
+  test("full width by default (ADR 0032); 500 px wide for a site set to narrow (ADR 0028)", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     const inner = async () => {
       const content = ((await c.call("read")).data as { content: string }).content;
       return (JSON.parse(content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1)) as { screen: { inner: string } }).screen.inner;
     };
     await c.call("open", { url: site.url("a.test", "/pages/diag") });
-    assert.match(await inner(), /^500x/);
-    t.services.sites.set("alice", { pattern: "b.test", device: "desktop" }, "user");
-    await c.call("open", { url: site.url("b.test", "/pages/diag") });
     assert.match(await inner(), /^1280x/);
+    t.services.sites.set("alice", { pattern: "b.test", device: "narrow" }, "user");
+    await c.call("open", { url: site.url("b.test", "/pages/diag") });
+    assert.match(await inner(), /^500x/);
   });
 
   test("find and click by name: icon buttons, hidden menu items, covered controls (live: Gmail, 12 Nov 2026)", async () => {
@@ -241,6 +241,113 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.match(exp.coveredBy!.text, /Cookies/);
     // Bad arguments say what click accepts.
     assert.match(String((await c.call("click", { target: "Settings" })).message), /Give ref .* or text/);
+  });
+
+  test("a picker in a dialog: find in it, read it, scroll it, click an option below its fold (live: Gmail themes, 13 Nov 2026)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    type M = { ref?: string; role: string; name: string; state: string; coveredBy?: unknown };
+    // The gear only opens a menu: the app's sync right after it isn't the agent acting, so nobody is asked (ADR 0030).
+    const before = site.hits.filter((h) => h.case === "menu-sync").length;
+    const gear = await c.call("click", { text: "Settings" });
+    assert.equal(gear.state, "ok", JSON.stringify(gear));
+    for (let i = 0; i < 40 && site.hits.filter((h) => h.case === "menu-sync").length === before; i++) await sleep(50);
+    assert.equal(site.hits.filter((h) => h.case === "menu-sync").length, before + 1, "the sync after opening a menu was held");
+    // No dialog yet; then "Set theme" opens it.
+    assert.match(String((await c.call("find", { within: "dialog" })).message), /No dialog is open/);
+    assert.equal((await c.call("click", { text: "Set theme" })).state, "ok");
+    // Everything in the dialog, in order; the picture options are named by their labels.
+    const listed = ((await c.call("find", { within: "dialog" })).data as { matches: M[] }).matches;
+    assert.ok(listed.length >= 20, JSON.stringify(listed.length));
+    const ocean = listed.find((m) => m.name.startsWith("Ocean"))!;
+    // Below the grid's fold, over the dialog's own padding: out of sight, not "covered by the dialog".
+    assert.equal(ocean.role, "option");
+    assert.equal(ocean.state, "offscreen", JSON.stringify(ocean));
+    // ARIA roles are accepted as they are.
+    const byRole = ((await c.call("find", { query: "ocean", role: "option" })).data as { matches: M[] }).matches;
+    assert.equal(byRole[0]?.ref, ocean.ref);
+    assert.equal(((await c.call("find", { query: "ocean", role: "radio" })).data as { matches: M[] }).matches.length, 0);
+    // Reading just the dialog leaves the page behind it out.
+    const partR = await c.call("read", { within: "dialog" });
+    const part = partR.data as { content: string };
+    assert.equal(partR.state, "ok", JSON.stringify(partR));
+    assert.match(part.content, /Pick your theme/);
+    assert.doesNotMatch(part.content, /Inbox: 3 conversations/);
+    // Scrolling inside the dialog collects its options; scroll with ref brings one into view.
+    const sc = (await c.call("scroll", { within: "dialog", until: { items: 40 } })).data as { items: Array<{ text: string }>; stoppedBecause: string };
+    assert.equal(sc.items.length, 40, JSON.stringify(sc.stoppedBecause));
+    assert.ok(sc.items.some((i) => /^Ocean/.test(i.text)));
+    assert.equal(((await c.call("scroll", { ref: listed[0]!.ref })).data as { inView: boolean }).inView, true);
+    // The option scrolled out again: click brings it into the grid's view and clicks it. Choosing a theme
+    // saves a setting as the person, so that request is still held.
+    const picked = await c.call("click", { ref: ocean.ref });
+    assert.equal(picked.state, "pending_approval", JSON.stringify(picked));
+    assert.match(((await c.call("read")).data as { content: string }).content, /picked: Ocean/);
+    await t.api("POST", `/api/tickets/${picked.ticket!.id}/deny`, { user: "alice" });
+    // A picture of an element comes back as image content.
+    const shot = await c.rpc("tools/call", { name: "look", arguments: { ref: ocean.ref } });
+    const content = shot.result!.content as Array<{ type: string; mimeType?: string; data?: string }>;
+    assert.equal(content[0]!.type, "image");
+    assert.equal(content[0]!.mimeType, "image/jpeg");
+    assert.ok(content[0]!.data!.length > 100);
+    // Bad arguments say what each tool accepts.
+    assert.match(String((await c.call("find", {})).message), /Give query .* or within/);
+    assert.match(String((await c.call("scroll", {})).message), /Give ref .* or until/);
+  });
+
+  test("a control past the window's edge is pressed with Enter; one that can't take focus is refused, honestly (live: Gmail themes, 12 Nov 2026)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    assert.equal((await c.call("click", { text: "Wide theme" })).state, "ok");
+    type M = { ref?: string; name: string; state: string };
+    const save = ((await c.call("find", { query: "Save", within: "dialog" })).data as { matches: M[] }).matches[0]!;
+    assert.equal(save.state, "offscreen", JSON.stringify(save));
+    // Save acts as the person: its request is held, and the page saw a real Enter on the button.
+    const saved = await c.call("click", { ref: save.ref });
+    assert.equal(saved.state, "pending_approval", JSON.stringify(saved));
+    assert.match(((await c.call("read")).data as { content: string }).content, /saved wide by enter/);
+    await t.api("POST", `/api/tickets/${saved.ticket!.id}/approve`, { user: "alice", body: { scope: "task" } });
+    // Once approved, the same click goes through and its result says what it sent (live: the agent read the
+    // activity log to learn whether its theme click had been sent).
+    const again = await c.call("click", { ref: save.ref });
+    assert.equal(again.state, "ok", JSON.stringify(again));
+    assert.ok((again.data as { sent?: string[] }).sent?.some((w) => /^POST \S+\/sink \(approved earlier\)$/.test(w)), JSON.stringify(again.data));
+    // A plain div past the edge can't be reached by keyboard either: say where it is, not that it's gone.
+    const restore = await c.call("click", { text: "Restore" });
+    assert.equal(restore.state, "error");
+    assert.match(String(restore.message), /outside the window/);
+    assert.doesNotMatch(String(restore.message), /isn't on the page/);
+  });
+
+  test("a write sent on mousedown is the click's, even long after the previous action (ADR 0027 trigger window)", async () => {
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    const quick = ((await c.call("find", { query: "Quick apply" })).data as { matches: Array<{ ref: string }> }).matches[0]!;
+    // Past the 3-second window: if the action were recorded only after the click returned, the POST sent
+    // during the press would pass as the page's own background request.
+    await sleep(3300);
+    const before = site.hits.filter((h) => h.case === "quick-apply").length;
+    const r = await c.call("click", { ref: quick.ref });
+    assert.equal(r.state, "pending_approval", JSON.stringify(r));
+    assert.equal(site.hits.filter((h) => h.case === "quick-apply").length, before, "the POST left without a person");
+    await t.api("POST", `/api/tickets/${r.ticket!.id}/deny`, { user: "alice" });
+  });
+
+  test("open a #route: lands on that route, without waiting for a load that never comes (live: Gmail, 13 Nov 2026)", async () => {
+    const c = await t.mcpClient(t.token("alice", "read"));
+    await c.call("open", { url: site.url("a.test", "/pages/picker") });
+    const route = async () => /route: \S*/.exec(((await c.call("read")).data as { content: string }).content)![0];
+    // A link to that route exists: it's followed, and the Inbox link (same page, other route) isn't.
+    let t0 = Date.now();
+    const a = await c.call("open", { url: site.url("a.test", "/pages/picker#settings/themes") });
+    assert.equal(a.state, "ok", JSON.stringify(a));
+    assert.equal(await route(), "route: #settings/themes");
+    assert.ok(Date.now() - t0 < 6000, `took ${Date.now() - t0} ms`);
+    // No link to it: the address changes in place, and that counts as arrived.
+    t0 = Date.now();
+    assert.equal((await c.call("open", { url: site.url("a.test", "/pages/picker#settings/general") })).state, "ok");
+    assert.equal(await route(), "route: #settings/general");
+    assert.ok(Date.now() - t0 < 6000, `took ${Date.now() - t0} ms`);
   });
 
   test("custom clickables get refs; click by text is the fallback; covered elements are refused", async () => {

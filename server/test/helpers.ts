@@ -163,6 +163,12 @@ export class FakeTab implements Tab {
   async findControls() {
     return [];
   }
+  async reveal() {
+    return { inView: true };
+  }
+  async look() {
+    return { jpeg: "ZmFrZQ==", width: 10, height: 10 };
+  }
   allowPopups() {}
   onPopup() {
     return () => {};
@@ -181,7 +187,11 @@ export class FakePool implements BrowserPool {
     this.tabs.push(t);
     return t;
   }
+  readonly cleared: string[] = [];
   async closeUser() {}
+  async clearData(userId: string) {
+    this.cleared.push(userId);
+  }
   async close() {}
 }
 

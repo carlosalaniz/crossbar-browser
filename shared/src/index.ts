@@ -13,13 +13,13 @@ export const LEVEL_RANK: Record<SiteLevel, number> = { blocked: 0, read: 1, read
 
 export const Device = z
   .enum(["narrow", "desktop", "mobile"])
-  .describe("How the site sees the browser (ADR 0028). narrow (default): the desktop browser in a window as narrow as Chrome allows, shaped like a phone screen, so responsive sites use their phone layout. desktop: a full-size window. mobile: an emulated phone (ADR 0006).");
+  .describe("How the site sees the browser (ADR 0032). desktop (default): a full-size window. narrow: the desktop browser in a window as narrow as Chrome allows, shaped like a phone screen, so responsive sites use their phone layout. mobile: an emulated phone (ADR 0006).");
 
 export const SiteRule = z.object({
   pattern: z.string().describe("Registrable domain (reddit.com) or a specific host (mail.google.com). The most specific rule wins."),
   level: SiteLevel,
   adblock: z.boolean().describe("Ad and tracker blocking (ADR 0003). On by default.").default(true),
-  device: Device.default("narrow"),
+  device: Device.default("desktop"),
   source: z.enum(["default", "user", "approval", "ticket"]).describe("Where this rule came from."),
 });
 export type SiteRule = z.infer<typeof SiteRule>;
@@ -78,6 +78,9 @@ const Until = z
   ])
   .describe("When to stop scrolling.");
 
+const Ref = z.string().regex(/^e\d+$/);
+const Area = z.union([Ref, z.literal("dialog")]);
+
 export const TOOLS = {
   open: def({
     name: "open",
@@ -89,10 +92,15 @@ export const TOOLS = {
   }),
   read: def({
     name: "read",
-    description: "Read the current page as markdown. Interactive elements carry refs like [e12] that click and type accept. mode content+links also lists every visible link and button with its ref and page region.",
+    description:
+      "Read the current page as text. Start here on every page. Default (auto): the page as markdown, a map of its sections on long pages, and the controls the markdown left out. Refs like [e12] are what click and type take; a ref with no text of its own shows its name and state, e.g. [e10: Collapse credit cards (expanded)]. If you can't tell what something belongs to (a balance without its account, a button without a label), read again with mode outline: every control with its name and state, plus the page's sections, without the body text. To read one part (an open dialog, a panel), pass within: its ref, or \"dialog\".",
     input: z.object({
-      mode: z.enum(["content", "content+links"]).default("content").describe("content: markdown only. content+links: also the links pass."),
+      mode: z
+        .enum(["auto", "content", "outline", "content+links"])
+        .default("auto")
+        .describe("auto (default): markdown plus a section map and the controls it left out. content: the markdown only. outline: sections and every control with name and state, no body text; best for apps (dashboards, settings, mail). content+links: markdown plus a structured list of links and buttons."),
       maxChars: z.number().int().min(500).max(200000).default(40000).describe("Truncate content to this many characters."),
+      within: Area.optional().describe('Read only this part of the page: an element ref (e.g. a dialog\'s, from find) or "dialog" for the open dialog.'),
     }),
     minToken: "read",
     class: "read",
@@ -100,7 +108,7 @@ export const TOOLS = {
   click: def({
     name: "click",
     description:
-      "Click an element: by ref from read or find (preferred), or by what it says (its text or label, e.g. an icon button's \"Settings\"). If you don't know where a control is, call find first. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked.",
+      "Click an element: by ref from read or find (preferred), or by what it says (its text or label, e.g. an icon button's \"Settings\"). If you don't know where a control is, call find first. Clicking is reading; if the click sends a request with consequences (posting, paying, deleting), it is held and a person is asked. When it sends something that was already approved, the result lists it under sent.",
     input: z
       .object({
         ref: z.string().regex(/^e\d+$/).optional().describe("Element ref from read or find, e.g. e12."),
@@ -124,23 +132,43 @@ export const TOOLS = {
   }),
   scroll: def({
     name: "scroll",
-    description: "Scroll the page with real wheel events, collecting items while scrolling (works on virtualized feeds). Says why it stopped: target, end, no_growth or cap.",
-    input: z.object({
-      until: Until,
-      selector: z.string().max(200).optional().describe("CSS selector for items. Defaults to the site adapter's, else article, [role=article], li."),
-    }),
+    description:
+      "Scroll with real wheel events. Three uses: ref brings one element into view (inside a dialog's scrolling list too); until scrolls the page collecting items (works on virtualized feeds) and says why it stopped: target, end, no_growth or cap; until with within scrolls inside one area (a dialog's list, a side panel) instead of the page. click already scrolls to what it clicks, so you rarely need ref.",
+    input: z
+      .object({
+        ref: Ref.optional().describe("Bring this element into view."),
+        until: Until.optional(),
+        within: Area.optional().describe('Scroll inside this area instead of the page: an element ref or "dialog" for the open dialog. Items default to its options and list rows.'),
+        selector: z.string().max(200).optional().describe("CSS selector for items. Defaults to the site adapter's, else article, [role=article], li."),
+      })
+      .refine((v) => !!v.ref || !!v.until, { message: 'Give ref (bring one element into view) or until (e.g. { "items": 30 }).' }),
     minToken: "read",
     class: "read",
   }),
   find: def({
     name: "find",
     description:
-      "Find controls on the current page by what they're called (text or label, icon buttons included): returns each match's ref, role, region and whether a click can reach it now — visible, offscreen (click scrolls to it), covered (and by what, with its ref), hidden (and the control that opens it, e.g. a menu button), or disabled. Cheaper than reading a big page.",
-    input: z.object({
-      query: z.string().min(1).max(100).describe('What the control is called, e.g. "Settings", "Archive", "Next page".'),
-      role: z.enum(["button", "link", "field", "menuitem", "tab", "checkbox", "other", "any"]).default("any").describe("Only controls of this kind."),
-      limit: z.number().int().min(1).max(20).default(8),
-    }),
+      "Find controls by what they're called (text or label, icon buttons included), or list every control in one area (within, no query): returns each match's ref, role, region and whether a click can reach it now — visible, offscreen (click scrolls to it), covered (and by what, with its ref), hidden (and the control that opens it, e.g. a menu button), or disabled. Cheaper than reading a big page.",
+    input: z
+      .object({
+        query: z.string().max(100).optional().describe('What the control is called, e.g. "Settings", "Archive", "Next page". Leave out with within to list everything in that area.'),
+        within: Area.optional().describe('Only inside this area: an element ref or "dialog" for the open dialog.'),
+        role: z
+          .string()
+          .max(40)
+          .default("any")
+          .describe("Only controls of this kind: button, link, field, menuitem, option, tab, checkbox, other, or any ARIA role (radio, switch, textbox…). Default any."),
+        limit: z.number().int().min(1).max(50).optional().describe("Most matches to return. Default 8; listing an area, 30."),
+      })
+      .refine((v) => !!v.query?.trim() || !!v.within, { message: 'Give query (what the control is called) or within (an area to list, e.g. "dialog").' }),
+    minToken: "read",
+    class: "read",
+  }),
+  look: def({
+    name: "look",
+    description:
+      "Screenshot: the whole visible browser window (no ref), or one element (ref), as a JPEG image. Only useful if you can see images. For what text doesn't say: picture options (themes, avatars), charts, which value sits next to which label, a layout that looks wrong. Try read (and read with mode outline) first; then this.",
+    input: z.object({ ref: Ref.optional().describe("The element to look at, brought into view first. Leave out for the whole visible window.") }),
     minToken: "read",
     class: "read",
   }),
@@ -201,6 +229,21 @@ export const TOOLS = {
     minToken: "read",
     class: "tighten",
   }),
+  finish: def({
+    name: "finish",
+    description: "Call when the task is done: closes this session's pages (each is a browser window). What the session has read still counts if you open more pages.",
+    input: z.object({}),
+    minToken: "read",
+    class: "read",
+  }),
+  clear_browser_data: def({
+    name: "clear_browser_data",
+    description:
+      "Clear all of the user's data in Crossbar's browser: both profiles' cookies, logins, site storage, cache and history. Every site is signed out. A person has to approve it; nothing is cleared until they do. Call wait_for_ticket.",
+    input: z.object({ reason: z.string().max(500).default("").describe("Why. Quoted to the person as unverified.") }),
+    minToken: "act",
+    class: "loosen",
+  }),
 } as const;
 
 export type ToolName = keyof typeof TOOLS;
@@ -230,6 +273,7 @@ export const LoginBody = z.object({ username: z.string().max(64), password: z.st
 export const CreateTokenBody = z.object({ agentName: z.string().min(1).max(64).describe("Written on every audit row."), kind: TokenKind.default("read") });
 export const SiteBody = z.object({ pattern: z.string().min(3).max(253), level: SiteLevel.optional(), adblock: z.boolean().optional(), device: Device.optional() });
 export const NotifyBody = z.object({ ntfyUrl: z.string().url().nullable().describe("ntfy topic URL, e.g. https://ntfy.sh/my-secret-topic. null turns notifications off.") });
+export const TaintBody = z.object({ strict: z.boolean() });
 export const CategoryBody = z.object({
   category: z.enum(["banking", "mail", "passwords", "cloud", "signin", "government"]).describe("Sensitive category (ADR 0014)."),
   enabled: z.boolean().describe("On: agents may use these sites under the normal ladder. Off: blocked for agents."),
@@ -300,9 +344,12 @@ export const ROUTES: RouteDef[] = [
   r({ method: "GET", path: "/api/live/:tab/stream", auth: "session", description: "Server-sent events: frames at up to 15 fps." }),
   r({ method: "POST", path: "/api/panic", auth: "either", description: "Panic. Only tightens." }),
   r({ method: "POST", path: "/api/resume", auth: "session", freshFactor: true, description: "Resume after panic (human only)." }),
+  r({ method: "POST", path: "/api/browser-data/clear", auth: "session", freshFactor: true, description: "Clear all browser data: both profiles' cookies, logins, storage, cache and history (a person; agents propose it)." }),
   r({ method: "GET", path: "/api/settings/notifications", auth: "session", description: "Where notifications go." }),
   r({ method: "PUT", path: "/api/settings/notifications", auth: "session", freshFactor: true, description: "Change where notifications go (human only).", body: NotifyBody }),
   r({ method: "POST", path: "/api/settings/notifications/test", auth: "session", description: "Send a test notification." }),
+  r({ method: "GET", path: "/api/settings/taint", auth: "session", description: "Strict taint mode (ADR 0033): after a signed-in read, every new site opens anonymously." }),
+  r({ method: "PUT", path: "/api/settings/taint", auth: "session", freshFactor: true, description: "Turn strict taint mode on or off (human only).", body: TaintBody }),
   r({ method: "GET", path: "/api/settings/categories", auth: "session", description: "Sensitive categories (banking, mail…) and whether agents may use them." }),
   r({ method: "PUT", path: "/api/settings/categories", auth: "session", freshFactor: true, description: "Turn a sensitive category on or off for agents (human only, ADR 0014).", body: CategoryBody }),
   r({ method: "GET", path: "/api/openapi.json", auth: "public", description: "OpenAPI document generated from this contract." }),

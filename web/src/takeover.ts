@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Take control: the remote page as a window you use directly, phone first.
-// - Tap to click (the press lasts as long as your finger), drag to scroll, pinch to zoom the view.
+// - Phone (ADR 0032): a magnifier over the desktop page, like Windows Magnifier. One finger moves the
+//   magnified view; two fingers scroll the page; pinch zooms; tap clicks (the press lasts as long as your
+//   finger); hold, then drag, drags in the page (sliders, puzzles). It follows the field being typed into.
 // - Tap a text field and the phone keyboard opens at once; the view zooms to the form and stays above the
 //   keyboard. What you type reaches the page key by key as you type it; a password-manager fill arrives
 //   whole, as it does on any site.
 // - On desktop, mouse and keyboard go straight to the page.
 // The device never changes (ADR 0015); input is ordered and bound to the tab it was aimed at (ADR 0016).
-import { clampPan, clientToPage, dragPanThenScroll, fieldAt, fitSize, keyFor, originOf, panToField, textEdit, zoomToBox, type PageBox } from "./logic.ts";
+import { clampPan, clientToPage, fieldAt, fitSize, keyFor, magnifierZoom, originOf, panToField, textEdit, twoFingerIntent, zoomToBox, type PageBox } from "./logic.ts";
 
 type Child = Node | string | null | undefined | false | Child[];
 export interface TakeoverDeps {
@@ -33,6 +35,8 @@ interface InputReply {
 }
 
 const TAP_SLOP = 10;
+/** Hold this long without moving, then drag: the drag goes to the page (ADR 0032). */
+const HOLD_MS = 450;
 const KIND_LABEL: Record<Kind, string> = { text: "Text", password: "Password", otp: "One-time code", frame: "Sign-in box (hidden as you type)" };
 const MODS = (e: KeyboardEvent | MouseEvent | WheelEvent) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
 const hostOf = (u: string) => {
@@ -86,7 +90,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   // ---- elements ----
   const img = h("img", { class: "tk-img", alt: "The page you're controlling", draggable: "false" }) as HTMLImageElement;
   const stage = h("div", { class: "tk-stage" }, img);
-  const hint = h("div", { class: "tk-hint" }, coarse ? "Tap to click · drag to scroll · pinch to zoom" : "Click the page to control it. Mouse and keyboard go straight to it.");
+  const hint = h("div", { class: "tk-hint" }, coarse ? "Tap to click · drag to look around · two fingers scroll · pinch to zoom · hold, then drag, to drag in the page" : "Click the page to control it. Mouse and keyboard go straight to it.");
   const badge = h("div", { class: "tk-badge", hidden: true });
   const view = h("div", { class: "tk-view", tabindex: "0", "aria-label": "Remote page. Click to control it." }, stage, hint, badge);
   setTimeout(() => hint.classList.add("gone"), 4000);
@@ -134,6 +138,7 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     "footer",
     { class: "tk-actions" },
     h("button", { class: "tk-btn", type: "button", onclick: () => startTyping(null, true) }, "⌨︎ Keyboard"),
+    phone ? h("button", { class: "tk-btn", type: "button", onclick: () => (z > 1.01 ? wholePage() : magnify()) }, "🔍 Zoom") : null,
     h("button", { class: "tk-btn", type: "button", onclick: () => (more.hidden = !more.hidden) }, "More"),
   );
   const dock = h("div", { class: "tk-dock" }, err, typingBar, more, footer);
@@ -268,6 +273,19 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   };
   onUrl(claim.origin);
   let es: EventSource | null = null;
+  // The first frame of each tab opens the magnifier over the top middle of the page; a focused field then
+  // takes it there instead (applyView).
+  let magnified = false;
+  // Until the person moves the view, it goes where the input is (a login form's first field), as Windows
+  // Magnifier follows focus; with no field, the top middle of the page.
+  let movedByHand = false;
+  const magnify = () => {
+    if (!phone || typingBox) return;
+    z = magnifierZoom(base, page.w);
+    const first = fields[0];
+    pan = first ? panToField(first, base, z, phoneView()) : { x: viewWidth() / 2 - (page.w / 2) * base * z, y: 0 };
+    applyPhone();
+  };
   const startStream = () => {
     es?.close();
     es = new EventSource(`/api/live/${encodeURIComponent(current)}/stream`);
@@ -278,6 +296,10 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       if (f.w !== page.w || f.h !== page.h) {
         page = { w: f.w, h: f.h };
         layout();
+      }
+      if (!magnified) {
+        magnified = true;
+        magnify();
       }
     };
     es.addEventListener("url", (e) => onUrl(JSON.parse((e as MessageEvent).data)));
@@ -303,6 +325,8 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     fields = [];
     stopTyping();
     wholePage();
+    magnified = false;
+    movedByHand = false;
     startStream();
     void refreshView();
   };
@@ -339,7 +363,9 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
 
   // ---- what has focus in the page ----
   const applyView = (v: ViewState) => {
+    const hadFields = fields.length > 0;
     fields = v.fields;
+    if (phone && magnified && !movedByHand && !hadFields && fields.length && !v.focus) magnify();
     if (v.focus) {
       startTyping(v.focus, false);
       if (phone) {
@@ -485,9 +511,21 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
   });
 
   // ---- touch (phone) ----
+  // Phone (ADR 0032): one finger moves the magnified view and never the page; two fingers scroll the page or
+  // pinch to zoom (decided once per gesture); tap clicks; hold, then drag, is a mouse drag in the page.
+  // A site set to the emulated phone gets real touch events instead.
   const touches = new Map<number, { x: number; y: number; x0: number; y0: number; t0: number }>();
-  let gesture: "none" | "tap" | "scroll" | "pinch" | "touch" = "none";
-  let pinch0: { dist: number; mx: number; my: number; zoom: typeof zoom } | null = null;
+  let gesture: "none" | "tap" | "pan" | "drag" | "two" | "touch" | "lifting" = "none";
+  let two0: { dist: number; mx: number; my: number; zoom: typeof zoom } | null = null;
+  let twoMode: "pinch" | "scroll" | null = null;
+  let lastMid = { mx: 0, my: 0 };
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let dragAt: { x: number; y: number } | null = null;
+  const clearHold = () => {
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = null;
+  };
+  d.onCleanup(clearHold);
   const mid = () => {
     const [a, b] = [...touches.values()];
     return { dist: Math.hypot(a!.x - b!.x, a!.y - b!.y), mx: (a!.x + b!.x) / 2, my: (a!.y + b!.y) / 2 };
@@ -497,24 +535,45 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       const p = pointAt({ clientX: t.x, clientY: t.y });
       return p ? [{ ...p, id: pid % 10 }] : [];
     });
+  /** Page px per screen px where the finger is: the wheel scrolls the page as far as the fingers moved. */
+  const pagePerScreenPx = () => page.w / Math.max(1, img.getBoundingClientRect().width);
   view.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch") return;
     e.preventDefault();
     view.setPointerCapture(e.pointerId);
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() });
     if (touches.size === 2) {
-      // Two fingers: zoom and pan the view. Nothing is sent to the page.
+      clearHold();
       if (gesture === "touch") void send({ type: "touchCancel", touchPoints: [] });
-      gesture = "pinch";
+      // A drag in the page ends where it was when a second finger lands.
+      if (gesture === "drag" && dragAt) void send({ type: "mouseReleased", ...dragAt, button: "left", clickCount: 1 });
+      dragAt = null;
+      gesture = "two";
+      twoMode = null;
       zoomTarget = null;
-      pinch0 = { ...mid(), zoom: phone ? { s: z, x: pan.x, y: pan.y } : { ...zoom } };
+      const m = mid();
+      two0 = { ...m, zoom: phone ? { s: z, x: pan.x, y: pan.y } : { ...zoom } };
+      lastMid = { mx: m.mx, my: m.my };
     } else if (touches.size === 1) {
       gesture = "tap";
-      // A mobile site gets the real touch sequence as it happens.
       if (mobileSite()) {
         gesture = "touch";
         void send({ type: "touchStart", touchPoints: touchPoints() });
+        return;
       }
+      const t = touches.get(e.pointerId)!;
+      clearHold();
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (gesture !== "tap" || touches.size !== 1) return;
+        const p = pointAt({ clientX: t.x0, clientY: t.y0 });
+        if (!p) return;
+        gesture = "drag";
+        dragAt = p;
+        navigator.vibrate?.(15);
+        void send({ type: "mouseMoved", ...p });
+        void send({ type: "mousePressed", ...p, button: "left", clickCount: 1 });
+      }, HOLD_MS);
     }
   });
   view.addEventListener("pointermove", (e) => {
@@ -524,19 +583,35 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
     const dy = e.clientY - t.y;
     t.x = e.clientX;
     t.y = e.clientY;
-    if (gesture === "pinch" && pinch0 && touches.size === 2) {
+    if (gesture === "two" && two0 && touches.size === 2) {
       const m = mid();
-      const s = Math.min(5, Math.max(1, (pinch0.zoom.s * m.dist) / pinch0.dist));
-      const r = view.getBoundingClientRect();
-      // Keep the point between the fingers under the fingers.
-      const ox = pinch0.mx - r.left;
-      const oy = pinch0.my - r.top;
-      const next = { s, x: m.mx - r.left - ((ox - pinch0.zoom.x) * s) / pinch0.zoom.s, y: m.my - r.top - ((oy - pinch0.zoom.y) * s) / pinch0.zoom.s };
-      if (phone) {
-        z = s;
-        pan = { x: next.x, y: next.y };
-      } else zoom = s === 1 ? { s: 1, x: 0, y: 0 } : next;
-      applyTransform();
+      twoMode ??= twoFingerIntent(two0, m);
+      if (twoMode === "pinch") {
+        movedByHand = true;
+        const s = Math.min(5, Math.max(1, (two0.zoom.s * m.dist) / two0.dist));
+        const r = view.getBoundingClientRect();
+        // Keep the point between the fingers under the fingers.
+        const ox = two0.mx - r.left;
+        const oy = two0.my - r.top;
+        const next = { s, x: m.mx - r.left - ((ox - two0.zoom.x) * s) / two0.zoom.s, y: m.my - r.top - ((oy - two0.zoom.y) * s) / two0.zoom.s };
+        if (phone) {
+          z = s;
+          pan = { x: next.x, y: next.y };
+        } else zoom = s === 1 ? { s: 1, x: 0, y: 0 } : next;
+        applyTransform();
+      } else if (twoMode === "scroll") {
+        const ddx = m.mx - lastMid.mx;
+        const ddy = m.my - lastMid.my;
+        const now = performance.now();
+        if (now - lastMove < 33 || Math.abs(ddx) + Math.abs(ddy) < 0.5) return;
+        lastMove = now;
+        lastMid = { mx: m.mx, my: m.my };
+        const p = pointAt({ clientX: m.mx, clientY: m.my }) ?? { x: page.w / 2, y: page.h / 2 };
+        const k = pagePerScreenPx();
+        void send({ type: "mouseWheel", ...p, deltaX: -ddx * k, deltaY: -ddy * k });
+        return;
+      }
+      lastMid = { mx: m.mx, my: m.my };
       return;
     }
     if (gesture === "touch") {
@@ -546,21 +621,32 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       void send({ type: "touchMove", touchPoints: touchPoints() });
       return;
     }
-    if (gesture === "tap" && Math.hypot(t.x - t.x0, t.y - t.y0) > TAP_SLOP) gesture = "scroll";
-    if (gesture === "scroll") {
-      // One finger: on a phone the view moves first, as far as the page's edge, and what's left scrolls the
-      // page under the finger, like a trackpad.
-      let rest = { x: dx, y: dy };
+    if (gesture === "drag") {
+      const now = performance.now();
+      if (now - lastMove < 33) return;
+      lastMove = now;
+      const p = pointAt({ clientX: t.x, clientY: t.y });
+      if (!p) return;
+      dragAt = p;
+      void send({ type: "mouseMoved", ...p, buttons: 1 });
+      return;
+    }
+    if (gesture === "tap" && Math.hypot(t.x - t.x0, t.y - t.y0) > TAP_SLOP) {
+      clearHold();
+      gesture = "pan";
+    }
+    if (gesture === "pan") {
+      movedByHand = true;
       if (phone) {
-        const r = dragPanThenScroll(pan, rest, z, { w: page.w * base, h: page.h * base }, phoneView());
-        pan = r.pan;
-        rest = r.scroll;
+        // The magnifier moves; the page doesn't.
+        pan = clampPan({ x: pan.x + dx, y: pan.y + dy }, z, { w: page.w * base, h: page.h * base }, phoneView());
         applyPhone();
+        return;
       }
-      if (Math.abs(rest.x) + Math.abs(rest.y) < 0.5) return;
+      // A touch screen that isn't a phone (a large tablet): the whole page is in view, so a drag scrolls it.
       const p = pointAt({ clientX: t.x0, clientY: t.y0 }) ?? { x: page.w / 2, y: page.h / 2 };
-      const k = page.w / img.getBoundingClientRect().width;
-      void send({ type: "mouseWheel", ...p, deltaX: -rest.x * k, deltaY: -rest.y * k });
+      const k = pagePerScreenPx();
+      void send({ type: "mouseWheel", ...p, deltaX: -dx * k, deltaY: -dy * k });
     }
   });
   const endTouch = async (e: PointerEvent) => {
@@ -575,6 +661,14 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
         if (field) startTyping(field, true);
         await send({ type: e.type === "pointercancel" ? "touchCancel" : "touchEnd", touchPoints: [] });
       }
+      return;
+    }
+    clearHold();
+    if (gesture === "drag") {
+      gesture = touches.size ? "lifting" : "none";
+      const p = pointAt({ clientX: t.x, clientY: t.y }) ?? dragAt;
+      dragAt = null;
+      if (p) void send({ type: "mouseReleased", ...p, button: "left", clickCount: 1 });
       return;
     }
     if (gesture === "tap" && e.type === "pointerup") {
@@ -596,9 +690,11 @@ export async function takeoverWindow(id: string, deps: TakeoverDeps): Promise<vo
       void send({ type: "mouseReleased", ...p, button: "left", clickCount: 1 });
       return;
     }
-    if (touches.size === 0) {
-      gesture = "none";
-      pinch0 = null;
+    // Lifting one of two fingers ends the gesture; the other finger does nothing until it lifts too.
+    gesture = touches.size ? "lifting" : "none";
+    if (!touches.size) {
+      two0 = null;
+      twoMode = null;
     }
   };
   view.addEventListener("pointerup", (e) => void endTouch(e));

@@ -2,7 +2,7 @@
 // `npm run dev:local`: the whole stack in one process, no Docker. Egress proxy, local test site,
 // and the app with a local Chromium behind the proxy. The test site answers as http://site-a.test:<port> (all
 // scenarios) and http://testsite.test:<port> (browser/ test pages); the port starts at 8090.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -45,6 +45,9 @@ if (!process.env.CROSSBAR_DATA && existsSync(legacy) && !existsSync(dataDir)) {
 }
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 chmodSync(dataDir, 0o700);
+
+// The app serves web/dist: build it now, so the web app always matches the code.
+execFileSync(process.execPath, [resolve(import.meta.dirname, "build-web.mjs")], { stdio: "inherit" });
 
 const port = process.env.CROSSBAR_PORT ?? String(await freePort(8080));
 if (port !== "8080" && !process.env.CROSSBAR_PORT) console.log(`Port 8080 is in use; using ${port}.`);

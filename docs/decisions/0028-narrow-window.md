@@ -1,6 +1,6 @@
 # 0028: The narrow window is the default
 
-- **Status:** Accepted (owner's decision, 12 Nov 2026)
+- **Status:** Superseded by ADR 0032 (13 Nov 2026); narrow remains a per-site choice
 - **Date:** 2026-11-12
 - **Amends:** ADR 0006 (desktop viewport by default) and ADR 0015 (device per session).
 

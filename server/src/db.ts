@@ -173,6 +173,12 @@ export function openDb(path: string): DB {
     db.prepare("UPDATE sites SET device = 'narrow' WHERE device = 'desktop'").run();
     setMeta(db, "device_default_narrow", "1");
   }
+  // ADR 0032: desktop is the default again (the narrow window broke wide dialogs, live in Gmail); rows that
+  // are narrow because of ADR 0028's default go back. The column default stays; set() always writes a device.
+  if (!getMeta(db, "device_default_desktop")) {
+    db.prepare("UPDATE sites SET device = 'desktop' WHERE device = 'narrow'").run();
+    setMeta(db, "device_default_desktop", "1");
+  }
   return db;
 }
 

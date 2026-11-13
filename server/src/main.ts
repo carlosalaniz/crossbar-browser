@@ -5,7 +5,8 @@ import { join, resolve } from "node:path";
 import { Auth } from "@crossbar/auth/auth";
 import { LocalPool, localLauncher } from "@crossbar/browser/pool";
 import { remoteLauncher } from "@crossbar/browser/remote";
-import { AdBlocker } from "@crossbar/browser/adblock";
+import { createHash } from "node:crypto";
+import { AdBlocker, EXTRA_FILTERS } from "@crossbar/browser/adblock";
 import { buildServices } from "./services.ts";
 import { createApp } from "./http.ts";
 import { openDb } from "./db.ts";
@@ -29,10 +30,12 @@ if (process.argv[2] === "reset-owner") {
 
 async function loadAdblock(): Promise<AdBlocker | undefined> {
   if (env.CROSSBAR_ADBLOCK === "off") return undefined;
-  const cache = join(dataDir, "adblock.bin");
+  // uBlock Origin's lists (ADR 0034), rebuilt daily: its quick fixes change often.
+  // The cache name carries a hash of Crossbar's own rules, so changing them rebuilds at once.
+  const cache = join(dataDir, `adblock-ubo-${createHash("sha256").update(EXTRA_FILTERS).digest("hex").slice(0, 8)}.bin`);
   try {
-    if (existsSync(cache) && Date.now() - (await import("node:fs")).statSync(cache).mtimeMs < 7 * 24 * 3600_000) return AdBlocker.deserialize(readFileSync(cache));
-    const b = await AdBlocker.fromPrebuilt();
+    if (existsSync(cache) && Date.now() - (await import("node:fs")).statSync(cache).mtimeMs < 24 * 3600_000) return AdBlocker.deserialize(readFileSync(cache));
+    const b = await AdBlocker.fromUblockLists().catch(() => AdBlocker.fromPrebuilt());
     writeFileSync(cache, b.serialize());
     return b;
   } catch (e) {
@@ -48,7 +51,7 @@ const launcher = env.CROSSBAR_BROWSER_URL
       proxyServer: env.CROSSBAR_PROXY,
       // Headful unless asked: headless announces itself to sites (audit S14).
       headless: env.CROSSBAR_HEADLESS === "1",
-      // A 16:10 desktop window, so the narrow phone-shaped window (ADR 0028) fits inside it.
+      // A 16:10 desktop screen: common, and the narrow window (an option, ADR 0028) still fits inside it.
       windowSize: env.CROSSBAR_WINDOW_SIZE ?? "1920,1200",
       hostResolverRules: env.CROSSBAR_HOST_RESOLVER_RULES,
       extraArgs: env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : [],

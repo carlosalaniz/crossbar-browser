@@ -808,8 +808,10 @@ function composedContains(outer: Element, inner: Element): boolean {
  * point is the element or inside it (through shadow DOM and slots), its label, or a component that wraps it.
  * Otherwise it names what's on top and gives it a ref, so the agent can deal with it (close a banner).
  */
-export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true } {
+export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true; outside?: true } {
   const target = elementByRef(p.ref);
+  // Past the window's edge (a dialog wider than a narrow window): nothing there to hit, but it's not gone.
+  if (target && isVisible(target) && (p.x < 0 || p.y < 0 || p.x >= innerWidth || p.y >= innerHeight)) return { ok: false, covering: null, outside: true };
   const hit = deepElementFromPoint(p.x, p.y);
   if (!target || !hit) return { ok: false, covering: null };
   if (composedContains(target, hit)) return { ok: true };

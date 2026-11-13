@@ -523,7 +523,7 @@ class CdpTab implements Tab {
   }
 
   async click(ref: string): Promise<{ tag: string; text: string; intent: "open" | "act" }> {
-    type Check = { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true };
+    type Check = { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true; outside?: true };
     let at = await this.locate(ref);
     let x = 0;
     let y = 0;
@@ -548,8 +548,12 @@ class CdpTab implements Tab {
       // Hovering can open menus or move things: check the final point again right before pressing.
       check = await verify();
     }
+    // Past the window's edge where no scroll reaches (Gmail's theme dialog is wider than the narrow window,
+    // live 12 Nov 2026): a person would Tab to it and press Enter. Focus it and press Enter.
+    if (!check.ok && check.outside && (await this.pressByKeyboard(ref))) return { tag: at.tag, text: at.text, intent: at.intent };
     if (!check.ok) {
       const c = check.covering;
+      if (check.outside) throw new Error(`${ref} is outside the window (the page is wider or taller than the window and doesn't scroll there), and it can't take keyboard focus. Not clicking.`);
       throw new Error(
         c
           ? `Something else is on top of ${ref}: ${c.tag}${c.text ? ` "${c.text}"` : ""} [${c.ref}]. Not clicking. If it's a banner or dialog, close it first (click ${c.ref} or its close button), then try again.`
@@ -563,6 +567,46 @@ class CdpTab implements Tab {
     await sleep(rand(45, 110));
     await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 }, this.session);
     return { tag: at.tag, text: at.text, intent: at.intent };
+  }
+
+  /** Focuses the element without scrolling and presses Enter (Space for checkboxes and switches), with real keys. */
+  private async pressByKeyboard(ref: string): Promise<boolean> {
+    const objectId = await this.b.scripts.elementHandle(this.session, ref);
+    if (!objectId) return false;
+    let how: string | null = null;
+    try {
+      const { result } = await this.cdp.send(
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: `function () {
+            if (this.matches('[disabled], [aria-disabled="true"]')) return null;
+            if (!this.matches('a[href], button, input, select, textarea, summary, [tabindex]') && !this.getAttribute('role')) return null;
+            this.focus({ preventScroll: true });
+            const a = this.getRootNode().activeElement || document.activeElement;
+            if (a !== this && !this.contains(a)) return null;
+            const role = this.getAttribute('role') || '';
+            return /^(checkbox|switch|radio|option)$/.test(role) || /^(checkbox|radio)$/.test(this.type || '') ? 'space' : 'enter';
+          }`,
+        },
+        this.session,
+      );
+      how = (result.value as string | null) ?? null;
+    } finally {
+      await this.cdp.send("Runtime.releaseObject", { objectId }, this.session).catch(() => {});
+    }
+    if (!how) return false;
+    await sleep(rand(80, 200));
+    const key =
+      how === "space"
+        ? { key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: " " }
+        : { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: "\r" };
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key }, this.session);
+    await sleep(rand(45, 110));
+    const { text: _t, ...up } = key;
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...up }, this.session);
+    return true;
   }
 
   /** Brings the element into sight (inside its scrolling box too), with the wheel first. */

@@ -771,6 +771,17 @@ describe("sensitive categories are account permissions (ADR 0014)", () => {
     assert.equal((await c.call("open", { url: "https://www.schwab.com/" })).state, "ok");
     // Other categories stay off; a person's own rule for one bank wins over the category.
     assert.equal(t.services.sites.resolve("alice", "https://mail.google.com/").level, "blocked");
+    // A parent domain's rule doesn't unlock a category that's off...
+    t.services.sites.set("alice", { pattern: "google.com", level: "read_as_you" }, "user");
+    assert.equal(t.services.sites.resolve("alice", "https://mail.google.com/").level, "blocked");
+    // ...but with the category on, it applies to the category's hosts (live: Gmail opened anonymous).
+    await t.api("PUT", "/api/settings/categories", { user: "alice", body: { category: "mail", enabled: true } });
+    const gmail = t.services.sites.resolve("alice", "https://mail.google.com/");
+    assert.equal(gmail.level, "read_as_you");
+    assert.equal(gmail.matched, "google.com");
+    assert.equal(gmail.category, "mail");
+    assert.equal(t.services.sites.resolve("alice", "https://outlook.live.com/").level, "read");
+    await t.api("PUT", "/api/settings/categories", { user: "alice", body: { category: "mail", enabled: false } });
     t.services.sites.set("alice", { pattern: "fidelity.com", level: "blocked" }, "user");
     assert.equal(t.services.sites.resolve("alice", "https://www.fidelity.com/").level, "blocked");
     // And with banking off again, one bank can still be allowed on its own.

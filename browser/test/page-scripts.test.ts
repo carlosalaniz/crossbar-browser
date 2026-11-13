@@ -61,6 +61,16 @@ describe("extraction", { skip: skipReason }, () => {
     assert.equal(await evaluate(env, s, `typeof globalThis.__crossbar`), "undefined");
   });
 
+  test("a page under Trusted Types still reads as markdown, not raw HTML (live: Gmail, 13 Nov 2026)", async () => {
+    const s = await openPage(env, env.site.url("a.test", "/tt-article"));
+    // The page really refuses string-to-DOM parsing, also from the isolated world.
+    assert.match(String(await scripts.inspect(s, `(() => { try { new DOMParser().parseFromString('<p>x</p>', 'text/html'); return 'parsed'; } catch (e) { return String(e); } })()`)), /TrustedHTML/);
+    const r = await scripts.extract(s, { includeLinks: true });
+    assert.doesNotMatch(r.content, /Partial conversion|<\/?(div|p|article)\b/);
+    assert.match(r.content, /Running Caddy as a reverse proxy/);
+    assert.match(r.content, /\[the Caddy docs \[e\d+\]\]\(https:\/\/caddyserver\.com\/docs\/\)/);
+  });
+
   test("whole-page fallback when the article extractor finds too little", async () => {
     const s = await openPage(env, env.site.url("a.test", "/pages/ads"));
     const r = await scripts.extract(s, { minWords: 500 });

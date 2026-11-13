@@ -24,6 +24,8 @@ export interface ScrollOptions {
   /** Scrolls without new items before stopping with no_growth. */
   noGrowthLimit?: number;
   collect?: CollectParams;
+  /** Scroll inside this area (a ref, or "dialog") instead of the page: the wheel turns over its scrolling box. */
+  within?: string;
 }
 
 export interface ScrollResult {
@@ -54,9 +56,11 @@ export async function scrollAndExtract(cdp: CdpConnection, sessionId: string, sc
   let scrolls = 0;
   let noGrowth = 0;
 
+  const within = opts.within;
+  const collect = within ? { ...opts.collect, within } : opts.collect;
   const take = async () => {
     let added = 0;
-    for (const it of await scripts.collectItems(sessionId, opts.collect)) {
+    for (const it of await scripts.collectItems(sessionId, collect)) {
       if (seen.has(it.key)) continue;
       seen.set(it.key, it);
       tokens += estimateTokens(it.text);
@@ -80,19 +84,23 @@ export async function scrollAndExtract(cdp: CdpConnection, sessionId: string, sc
   for (;;) {
     if (reached()) return result("target");
     if (scrolls >= caps.maxScrolls || tokens >= caps.maxTokens || Date.now() - started >= caps.maxSeconds * 1000) return result("cap");
-    const before = await scripts.scrollState(sessionId);
-    const { layoutViewport } = await cdp.send("Page.getLayoutMetrics", undefined, sessionId);
-    const x = Math.round(layoutViewport.clientWidth / 2);
-    const y = Math.round(layoutViewport.clientHeight / 2);
+    const before = await scripts.scrollState(sessionId, within);
+    let x = Math.round(before.x);
+    let y = Math.round(before.y);
+    if (!within) {
+      const { layoutViewport } = await cdp.send("Page.getLayoutMetrics", undefined, sessionId);
+      x = Math.round(layoutViewport.clientWidth / 2);
+      y = Math.round(layoutViewport.clientHeight / 2);
+    }
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: Math.round(before.viewportHeight * 0.8) }, sessionId);
     scrolls++;
     await sleep(pace);
     const added = await take();
-    const after = await scripts.scrollState(sessionId);
+    const after = await scripts.scrollState(sessionId, within);
     if (after.atEnd && added === 0) {
       // One more pause for infinite feeds that load at the bottom.
       await sleep(pace);
-      if ((await take()) === 0 && (await scripts.scrollState(sessionId)).atEnd) return result(reached() ? "target" : "end");
+      if ((await take()) === 0 && (await scripts.scrollState(sessionId, within)).atEnd) return result(reached() ? "target" : "end");
     }
     // Progress is new items or new scroll distance; only a stall with neither counts as no growth.
     const moved = after.scrollY > before.scrollY + 1 || after.scrollHeight > before.scrollHeight;

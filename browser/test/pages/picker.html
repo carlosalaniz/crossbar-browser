@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Gmail's theme picker (live, 13 Nov 2026): the settings gear opens a menu and the app syncs right after
+     the click; "Set theme" opens a modal whose options are pictures in a scrolling grid. "Ocean" sits below the
+     grid's fold, over the dialog's own padding, so a click at its centre lands on the dialog. -->
+<html><head><meta charset="utf-8"><title>Picker</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  header { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px; background: #eee; }
+  .gear { width: 40px; height: 40px; border: 0; border-radius: 50%; background: #ccc; }
+  #menu[hidden] { display: none; }
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); }
+  .dialog { position: fixed; top: 40px; left: 20px; width: 440px; height: 520px; padding: 16px 16px 260px; box-sizing: border-box; background: #fff; overflow: hidden; }
+  .grid { height: 200px; overflow-y: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .opt { height: 60px; border-radius: 6px; cursor: pointer; }
+  [hidden] { display: none !important; }
+</style></head>
+<body>
+<header>
+  <button class="gear" aria-label="Settings" aria-haspopup="menu" aria-expanded="false" onclick="openMenu(this)"><svg width="20" height="20"><circle cx="10" cy="10" r="6"/></svg></button>
+  <ul id="menu" role="menu" hidden><li role="menuitem" tabindex="-1">See all settings</li></ul>
+  <a href="#inbox">Inbox</a>
+  <a href="#settings/themes">Themes</a>
+  <button id="set-theme" onclick="document.getElementById('picker').hidden = false">Set theme</button>
+</header>
+<main><p>Inbox: 3 conversations</p><p id="log">nothing picked</p><p id="route"></p></main>
+<div id="picker" hidden>
+  <div class="backdrop"></div>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label="Pick your theme">
+    <div>Pick your theme</div>
+    <div class="grid" id="grid"></div>
+  </div>
+</div>
+<script>
+  // The app's own sync: a POST right after any click, as Gmail sends.
+  function sync(kind) { fetch('/sink?case=' + kind, { method: 'POST', body: 'sync=1' }).catch(() => {}); }
+  function openMenu(b) { const m = document.getElementById('menu'); m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); setTimeout(() => sync('menu-sync'), 300); }
+  const names = [];
+  for (let i = 0; i < 40; i++) names.push(i === 21 ? 'Ocean (by: iStockPhoto)' : 'By: Photographer ' + i);
+  const grid = document.getElementById('grid');
+  names.forEach((n, i) => {
+    const d = document.createElement('div');
+    d.className = 'opt'; d.setAttribute('role', 'option'); d.setAttribute('aria-label', n); d.tabIndex = 0;
+    d.style.background = 'hsl(' + (i * 9) + ',60%,60%)';
+    d.onclick = () => { document.getElementById('log').textContent = 'picked: ' + n.split(' (')[0]; fetch('/sink?case=theme-save', { method: 'POST', body: 'theme=' + i }).catch(() => {}); };
+    grid.appendChild(d);
+  });
+  const route = () => { document.getElementById('route').textContent = 'route: ' + location.hash; };
+  addEventListener('hashchange', route); route();
+</script>
+</body></html>

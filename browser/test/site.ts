@@ -53,6 +53,9 @@ export async function startSite(opts: { host?: string; port?: number } = {}): Pr
         return send(200, "ok", "text/plain");
       case "/blank":
         return send(200, html("blank"));
+      // A page under Trusted Types, like Gmail: parsing an HTML string into DOM throws there.
+      case "/tt-article":
+        return send(200, readFileSync(join(import.meta.dirname, "pages", "article.html"), "utf8"), "text/html", { "content-security-policy": "require-trusted-types-for 'script'; trusted-types gmail-policy" });
       case "/r307":
         record(req);
         return send(307, "", "text/plain", { location: `/sink?case=${u.searchParams.get("case")}-hop2` });

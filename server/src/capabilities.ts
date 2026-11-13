@@ -91,17 +91,19 @@ async function dispatch(s: Services, a: AgentSession, name: ToolName, args: Reco
     case "open":
       return a.open(args.url);
     case "read":
-      return a.read(args.mode, args.maxChars);
+      return a.read(args.mode, args.maxChars, args.within);
     case "click":
       return args.ref ? a.click(args.ref) : a.clickText(String(args.text), Number(args.nth ?? 0));
     case "type":
       return a.type(args.ref, args.text, args.submit);
     case "scroll":
-      return a.scroll(args.until, args.selector);
+      return a.scroll({ until: args.until, selector: args.selector, ref: args.ref, within: args.within });
     case "back":
       return a.back();
     case "find":
-      return a.find(String(args.query), args.role, Number(args.limit ?? 8));
+      return a.find(String(args.query ?? ""), String(args.role ?? "any"), args.limit, args.within);
+    case "look":
+      return a.look(args.ref);
     case "ask_person":
       return a.askPerson(args.need, String(args.reason));
     case "wait_for_ticket": {

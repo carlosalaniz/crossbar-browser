@@ -163,6 +163,12 @@ export class FakeTab implements Tab {
   async findControls() {
     return [];
   }
+  async reveal() {
+    return { inView: true };
+  }
+  async look() {
+    return { jpeg: "ZmFrZQ==", width: 10, height: 10 };
+  }
   allowPopups() {}
   onPopup() {
     return () => {};

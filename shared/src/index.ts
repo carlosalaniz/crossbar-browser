@@ -78,6 +78,9 @@ const Until = z
   ])
   .describe("When to stop scrolling.");
 
+const Ref = z.string().regex(/^e\d+$/);
+const Area = z.union([Ref, z.literal("dialog")]);
+
 export const TOOLS = {
   open: def({
     name: "open",
@@ -89,10 +92,12 @@ export const TOOLS = {
   }),
   read: def({
     name: "read",
-    description: "Read the current page as markdown. Interactive elements carry refs like [e12] that click and type accept. mode content+links also lists every visible link and button with its ref and page region.",
+    description:
+      "Read the current page as markdown. Interactive elements carry refs like [e12] that click and type accept. mode content+links also lists every visible link and button with its ref and page region. To read one part (an open dialog, a panel), pass within: its ref, or \"dialog\".",
     input: z.object({
       mode: z.enum(["content", "content+links"]).default("content").describe("content: markdown only. content+links: also the links pass."),
       maxChars: z.number().int().min(500).max(200000).default(40000).describe("Truncate content to this many characters."),
+      within: Area.optional().describe('Read only this part of the page: an element ref (e.g. a dialog\'s, from find) or "dialog" for the open dialog.'),
     }),
     minToken: "read",
     class: "read",
@@ -124,23 +129,43 @@ export const TOOLS = {
   }),
   scroll: def({
     name: "scroll",
-    description: "Scroll the page with real wheel events, collecting items while scrolling (works on virtualized feeds). Says why it stopped: target, end, no_growth or cap.",
-    input: z.object({
-      until: Until,
-      selector: z.string().max(200).optional().describe("CSS selector for items. Defaults to the site adapter's, else article, [role=article], li."),
-    }),
+    description:
+      "Scroll with real wheel events. Three uses: ref brings one element into view (inside a dialog's scrolling list too); until scrolls the page collecting items (works on virtualized feeds) and says why it stopped: target, end, no_growth or cap; until with within scrolls inside one area (a dialog's list, a side panel) instead of the page. click already scrolls to what it clicks, so you rarely need ref.",
+    input: z
+      .object({
+        ref: Ref.optional().describe("Bring this element into view."),
+        until: Until.optional(),
+        within: Area.optional().describe('Scroll inside this area instead of the page: an element ref or "dialog" for the open dialog. Items default to its options and list rows.'),
+        selector: z.string().max(200).optional().describe("CSS selector for items. Defaults to the site adapter's, else article, [role=article], li."),
+      })
+      .refine((v) => !!v.ref || !!v.until, { message: 'Give ref (bring one element into view) or until (e.g. { "items": 30 }).' }),
     minToken: "read",
     class: "read",
   }),
   find: def({
     name: "find",
     description:
-      "Find controls on the current page by what they're called (text or label, icon buttons included): returns each match's ref, role, region and whether a click can reach it now — visible, offscreen (click scrolls to it), covered (and by what, with its ref), hidden (and the control that opens it, e.g. a menu button), or disabled. Cheaper than reading a big page.",
-    input: z.object({
-      query: z.string().min(1).max(100).describe('What the control is called, e.g. "Settings", "Archive", "Next page".'),
-      role: z.enum(["button", "link", "field", "menuitem", "tab", "checkbox", "other", "any"]).default("any").describe("Only controls of this kind."),
-      limit: z.number().int().min(1).max(20).default(8),
-    }),
+      "Find controls by what they're called (text or label, icon buttons included), or list every control in one area (within, no query): returns each match's ref, role, region and whether a click can reach it now — visible, offscreen (click scrolls to it), covered (and by what, with its ref), hidden (and the control that opens it, e.g. a menu button), or disabled. Cheaper than reading a big page.",
+    input: z
+      .object({
+        query: z.string().max(100).optional().describe('What the control is called, e.g. "Settings", "Archive", "Next page". Leave out with within to list everything in that area.'),
+        within: Area.optional().describe('Only inside this area: an element ref or "dialog" for the open dialog.'),
+        role: z
+          .string()
+          .max(40)
+          .default("any")
+          .describe("Only controls of this kind: button, link, field, menuitem, option, tab, checkbox, other, or any ARIA role (radio, switch, textbox…). Default any."),
+        limit: z.number().int().min(1).max(50).optional().describe("Most matches to return. Default 8; listing an area, 30."),
+      })
+      .refine((v) => !!v.query?.trim() || !!v.within, { message: 'Give query (what the control is called) or within (an area to list, e.g. "dialog").' }),
+    minToken: "read",
+    class: "read",
+  }),
+  look: def({
+    name: "look",
+    description:
+      "See an element (or the visible page) as a picture: a JPEG screenshot. For what text doesn't say: picture options (themes, avatars), charts, a layout that looks wrong. Prefer read and find; use this when they leave you guessing.",
+    input: z.object({ ref: Ref.optional().describe("The element to look at, brought into view first. Leave out for the visible page.") }),
     minToken: "read",
     class: "read",
   }),

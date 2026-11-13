@@ -15,6 +15,8 @@ const createMarkdownContent = (mod.createMarkdownContent ?? (inner as { createMa
 
 export interface ExtractParams {
   includeLinks?: boolean;
+  /** Read only this element (a dialog, a panel), by ref; the whole page if absent. */
+  within?: string;
   /** Below this many words from Defuddle, fall back to converting the whole visible page. */
   minWords?: number;
   /** How long the DOM must be quiet before extracting (SPA render wait). */
@@ -41,6 +43,8 @@ export interface ExtractResult {
 
 export interface CollectParams {
   selector?: string;
+  /** Collect only inside this area (a ref, or "dialog"). */
+  within?: string;
   /** Attribute that holds a stable key (adapter-provided), else hash(href + text). */
   keyAttr?: string;
   maxTextChars?: number;
@@ -58,6 +62,9 @@ export interface ScrollState {
   viewportHeight: number;
   scrollHeight: number;
   atEnd: boolean;
+  /** Where to turn the wheel: the middle of the scrolling box (the window's middle for the page). */
+  x: number;
+  y: number;
 }
 
 /**
@@ -248,29 +255,75 @@ function waitForQuiet(quietMs: number, maxWaitMs: number): Promise<void> {
 const words = (s: string) => (s.match(/\S+/g) ?? []).length;
 const fromMarkers = (s: string) => s.replace(/⟦(e\d+)⟧/g, "[$1]");
 
+/** What the converter returns when Turndown throws; it then embeds the raw HTML (live: Gmail, 13 Nov 2026). */
+const CONVERSION_FAILED = /^Partial conversion completed with errors/;
+
+/**
+ * Markdown from a DOM node, never from an HTML string. Pages under Trusted Types (Gmail) refuse every
+ * string-to-DOM parse, also in the isolated world, and refuse new policies, so Turndown parsing the
+ * serialized HTML throws and the converter dumps raw HTML. Turndown takes a node directly; the converter
+ * first strips <wbr> with String.replace, so the node answers that call with itself.
+ */
+function markdownOf(root: HTMLElement, url: string): string {
+  for (const w of root.querySelectorAll("wbr")) w.remove();
+  const node = root as HTMLElement & { replace?: () => HTMLElement };
+  node.replace = () => root;
+  try {
+    const md = createMarkdownContent(node as unknown as string, url);
+    return CONVERSION_FAILED.test(md) ? plainText(root) : md;
+  } finally {
+    delete node.replace;
+  }
+}
+
+const BLOCK = /^(address|article|aside|blockquote|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tr|ul)$/i;
+/** Last resort: the text, one block per line, refs kept. */
+function plainText(root: Node): string {
+  const out: string[] = [];
+  const walk = (n: Node) => {
+    if (n.nodeType === Node.TEXT_NODE) out.push(n.textContent ?? "");
+    else if (n.nodeType === Node.ELEMENT_NODE) {
+      const block = BLOCK.test((n as Element).tagName);
+      if (block) out.push("\n");
+      for (const c of n.childNodes) walk(c);
+      if (block) out.push("\n");
+    }
+  };
+  walk(root);
+  return out.join("").replace(/[ \t]+/g, " ").replace(/ *\n[ \n]*/g, "\n").trim();
+}
+
 export async function extract(p: ExtractParams = {}): Promise<ExtractResult> {
   if (document.readyState !== "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
   await waitForQuiet(p.quietMs ?? 300, p.maxWaitMs ?? 3000);
   tagRefs();
-  const visible = cloneVisible(document.body) as HTMLElement | null;
+  const scope = p.within ? areaOf(p.within) : document.body;
+  if (!scope) throw new Error(p.within === "dialog" ? "No dialog is open." : `No element with ref ${p.within} on the page any more. Call find or read again.`);
+  const visible = cloneVisible(scope) as HTMLElement | null;
   const doc = document.implementation.createHTMLDocument(document.title);
   if (visible) {
     inlineRefMarkers(visible);
-    doc.body.replaceWith(doc.importNode(visible, true));
+    const body = doc.createElement("body");
+    body.appendChild(doc.importNode(visible, true));
+    doc.body.replaceWith(body);
   }
   const url = location.href;
   let content = "";
   let usedFallback = false;
-  try {
-    // useAsync: false — never let extraction make network requests (ADR 0002).
-    const r = new Defuddle(doc, { url, markdown: true, useAsync: false, removeHiddenElements: false }).parse();
-    content = r.content ?? "";
-  } catch {
-    content = "";
+  // A part of the page is converted as it is: the article extractor would look for an article inside it.
+  if (!p.within) {
+    try {
+      // useAsync: false — never let extraction make network requests (ADR 0002).
+      const r = new Defuddle(doc, { url, markdown: true, useAsync: false, removeHiddenElements: false }).parse();
+      content = r.content ?? "";
+    } catch {
+      content = "";
+    }
+    if (CONVERSION_FAILED.test(content)) content = "";
   }
-  if (words(content) < (p.minWords ?? 60)) {
-    usedFallback = true;
-    content = createMarkdownContent(doc.body.innerHTML, url);
+  if (p.within || words(content) < (p.minWords ?? 60)) {
+    usedFallback = !p.within;
+    content = markdownOf(doc.body, url);
   }
   content = fromMarkers(content).trim();
   const out: ExtractResult = { url, title: document.title, content, wordCount: words(content), usedFallback };
@@ -291,13 +344,17 @@ function hash(s: string): string {
 /** Items currently in the DOM (virtualized lists drop the rest), keyed for de-duplication across scrolls. */
 export function collectItems(p: CollectParams = {}): CollectedItem[] {
   tagRefs();
-  const sel = p.selector ?? "article, [role=article], li";
+  const area = p.within ? areaOf(p.within) : document;
+  if (!area) throw new Error(p.within === "dialog" ? "No dialog is open." : `No element with ref ${p.within} on the page any more.`);
+  // Inside a box (a picker, a dropdown), its options are the items.
+  const sel = p.selector ?? (p.within ? "[role=option], [role=listitem], [role=row], [role=menuitem], [role=article], article, li" : "article, [role=article], li");
   const out: CollectedItem[] = [];
-  for (const el of document.querySelectorAll(sel)) {
+  for (const el of area.querySelectorAll(sel)) {
     if (!isVisible(el)) continue;
     // Skip containers whose items are themselves matched (nested lists).
     if (el.querySelector(sel)) continue;
-    const text = (((el as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim()).slice(0, p.maxTextChars ?? 500);
+    // Picture options (Gmail's themes) have no text, only a label.
+    const text = (((el as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim() || nameOf(el)).slice(0, p.maxTextChars ?? 500);
     if (!text) continue;
     const a = el.querySelector("a[href]") as HTMLAnchorElement | null;
     const href = a?.href;
@@ -307,12 +364,43 @@ export function collectItems(p: CollectParams = {}): CollectedItem[] {
   return out;
 }
 
-export function scrollState(): ScrollState {
+/**
+ * The box that scrolls for an area: the element itself if it scrolls, else the scrolling box inside it with
+ * the most to scroll (a dialog's list), else the nearest scrolling box around it.
+ */
+function scrollBoxOf(el: Element): Element | null {
+  if (scrolls(el)) return el;
+  let best: Element | null = null;
+  let most = 0;
+  let n = 0;
+  for (const d of el.querySelectorAll("*")) {
+    if (++n > MAX_SCAN) break;
+    const extra = d.scrollHeight - d.clientHeight;
+    if (extra > most && scrolls(d) && shown(d)) {
+      best = d;
+      most = extra;
+    }
+  }
+  return best ?? scrollerOf(el);
+}
+
+export function scrollState(p: { within?: string } = {}): ScrollState {
+  if (p.within) {
+    const area = areaOf(p.within);
+    if (!area) throw new Error(p.within === "dialog" ? "No dialog is open." : `No element with ref ${p.within} on the page any more.`);
+    const box = scrollBoxOf(area);
+    if (box) {
+      const r = box.getBoundingClientRect();
+      const top = Math.max(0, r.top);
+      const bottom = Math.min(innerHeight, r.bottom);
+      return { scrollY: box.scrollTop, viewportHeight: box.clientHeight, scrollHeight: box.scrollHeight, atEnd: box.scrollTop + box.clientHeight >= box.scrollHeight - 2, x: (Math.max(0, r.left) + Math.min(innerWidth, r.right)) / 2, y: (top + bottom) / 2 };
+    }
+  }
   const se = document.scrollingElement ?? document.documentElement;
   const scrollY = se.scrollTop;
   const viewportHeight = innerHeight;
   const scrollHeight = se.scrollHeight;
-  return { scrollY, viewportHeight, scrollHeight, atEnd: scrollY + viewportHeight >= scrollHeight - 2 };
+  return { scrollY, viewportHeight, scrollHeight, atEnd: scrollY + viewportHeight >= scrollHeight - 2, x: innerWidth / 2, y: innerHeight / 2 };
 }
 
 /** Cosmetic ad filtering: CSS from the adblock engine, injected as a style element. */
@@ -343,23 +431,121 @@ export function domTokens(): { classes: string[]; ids: string[]; hrefs: string[]
   return { classes: [...classes], ids: [...ids], hrefs: [...hrefs] };
 }
 
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+const clipsOverflow = (s: CSSStyleDeclaration) => /(auto|scroll|hidden|clip)/.test(s.overflowX + s.overflowY);
+const scrolls = (el: Element) => {
+  const s = getComputedStyle(el);
+  return (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1) || (/(auto|scroll)/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1);
+};
+
 /**
- * Where the element with this ref is, in viewport coordinates. It isn't scrolled unless `reveal` is set:
- * the caller scrolls with real wheel events first, like a person (audit S06), and only falls back to this.
+ * The part of the viewport where the element can be seen: the window, cut down by every ancestor that clips
+ * its overflow (a scrolling list inside a dialog). Gmail's theme picker: the option was inside the window but
+ * below the list's fold, so a click there landed on the dialog (live, 13 Nov 2026).
  */
-export function locateRef(p: { ref: string; reveal?: boolean }): { x: number; y: number; w: number; h: number; inView: boolean; vw: number; vh: number; tag: string; text: string } | null {
-  const el = elementByRef(p.ref);
-  if (!el || !isVisible(el)) return null;
-  let r = el.getBoundingClientRect();
-  const inView = (rr: DOMRect) => rr.top >= 0 && rr.left >= 0 && rr.bottom <= innerHeight && rr.right <= innerWidth && rr.width > 0 && rr.height > 0;
-  if (p.reveal && !inView(r)) {
-    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" as ScrollBehavior });
-    r = el.getBoundingClientRect();
+function clipOf(el: Element): Box {
+  const box: Box = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+  for (let a = composedParent(el), i = 0; a && a !== document.body && a !== document.documentElement && i < 100; a = composedParent(a), i++) {
+    const s = getComputedStyle(a);
+    if (s.position === "fixed") break;
+    if (!clipsOverflow(s)) continue;
+    const r = a.getBoundingClientRect();
+    box.left = Math.max(box.left, r.left);
+    box.top = Math.max(box.top, r.top);
+    box.right = Math.min(box.right, r.right);
+    box.bottom = Math.min(box.bottom, r.bottom);
   }
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, inView: inView(r), vw: innerWidth, vh: innerHeight, tag: el.tagName.toLowerCase(), text: textOf(el) };
+  return box;
 }
 
-export type ControlRole = "button" | "link" | "field" | "menuitem" | "tab" | "checkbox" | "other";
+/** The nearest ancestor that scrolls (where a wheel moves the element), or null for the page itself. */
+function scrollerOf(el: Element): Element | null {
+  for (let a = composedParent(el), i = 0; a && a !== document.body && a !== document.documentElement && i < 100; a = composedParent(a), i++) if (scrolls(a)) return a;
+  return null;
+}
+
+/** Centre of an element, and whether the centre is where it can be seen (inside every clipping ancestor). */
+function sightOf(el: Element): { x: number; y: number; w: number; h: number; inView: boolean; clip: Box } {
+  const r = el.getBoundingClientRect();
+  const clip = clipOf(el);
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  const inView = r.width > 0 && r.height > 0 && x >= clip.left && x <= clip.right && y >= clip.top && y <= clip.bottom;
+  return { x, y, w: r.width, h: r.height, inView, clip };
+}
+
+const COMMIT_WORDS =
+  /\b(send|post|publish|submit|save|apply|confirm|delete|remove|trash|discard|archive|buy|pay|purchase|order|checkout|subscribe|unsubscribe|follow|unfollow|like|upvote|downvote|vote|reply|comment|share|invite|accept|decline|approve|reject|block|report|mark|move|label|star|transfer|book|reserve|sign|log ?out|upload|create|add|update|change|set|enable|disable|turn|install|connect|disconnect|done|ok|yes|continue|next|finish|join|leave|mute|pin|retry|undo)\b/i;
+const OPEN_WORDS = /\b(settings|menu|more|options|see all|see more|show|view|open|expand|collapse|close|cancel|back|filter|sort|search|help|details|preview|previous|older|newer|page \d+)\b/i;
+
+/**
+ * What a click on this control is for (ADR 0030): "open" only shows something (a menu, a tab, a dialog, a
+ * panel, another page by link); "act" may do something as the person (save, send, choose). Structure first
+ * (a popup or disclosure button, a tab), then the words on it; anything unclear acts. A page can mislabel a
+ * control, but what it gains is no more than ADR 0027 already lets its own scripts send.
+ */
+function intentOf(el: Element): "open" | "act" {
+  const tag = el.tagName.toLowerCase();
+  const role = (el.getAttribute("role") ?? "").toLowerCase();
+  const type = ((el as HTMLButtonElement).type ?? "").toLowerCase();
+  // Sends a form, or chooses something (an option, a box, a switch): acts.
+  if ((tag === "button" && type === "submit" && el.closest("form")) || (tag === "input" && /^(submit|image)$/.test(type))) return "act";
+  if (/^(option|radio|checkbox|switch|menuitemradio|menuitemcheckbox)$/.test(role) || (tag === "input" && /^(checkbox|radio)$/.test(type))) return "act";
+  const popup = el.getAttribute("aria-haspopup");
+  if ((popup && popup !== "false") || el.hasAttribute("aria-expanded") || role === "tab" || tag === "summary") return "open";
+  const name = nameOf(el);
+  if (COMMIT_WORDS.test(name)) return "act";
+  if (OPEN_WORDS.test(name)) return "open";
+  const href = tag === "a" ? (el.getAttribute("href") ?? "") : "";
+  if (href && !/^(#|javascript:)/i.test(href.trim())) return "open";
+  return "act";
+}
+
+/**
+ * Where the element with this ref is, in viewport coordinates, and whether it can be seen there (not just in
+ * the window: inside its scrolling list too). If not, `scroller` is the box a wheel should turn: its nearest
+ * scrolling ancestor, or the page. It isn't scrolled unless `reveal` is set: the caller scrolls with real
+ * wheel events first, like a person (audit S06), and only falls back to this.
+ */
+export function locateRef(p: { ref: string; reveal?: boolean }): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  inView: boolean;
+  vw: number;
+  vh: number;
+  tag: string;
+  text: string;
+  scroller: { x: number; y: number; w: number; h: number } | null;
+  intent: "open" | "act";
+} | null {
+  const el = elementByRef(p.ref);
+  if (!el || !isVisible(el)) return null;
+  let at = sightOf(el);
+  if (p.reveal && !at.inView) {
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" as ScrollBehavior });
+    at = sightOf(el);
+  }
+  let scroller: { x: number; y: number; w: number; h: number } | null = null;
+  const sc = at.inView ? null : scrollerOf(el);
+  if (sc) {
+    const r = sc.getBoundingClientRect();
+    const left = Math.max(0, r.left);
+    const top = Math.max(0, r.top);
+    const w = Math.min(innerWidth, r.right) - left;
+    const h = Math.min(innerHeight, r.bottom) - top;
+    if (w > 4 && h > 4) scroller = { x: left + w / 2, y: top + h / 2, w, h };
+  }
+  return { x: at.x, y: at.y, w: at.w, h: at.h, inView: at.inView, vw: innerWidth, vh: innerHeight, tag: el.tagName.toLowerCase(), text: textOf(el), scroller, intent: intentOf(el) };
+}
+
+export type ControlRole = "button" | "link" | "field" | "menuitem" | "option" | "tab" | "checkbox" | "other";
 export type ControlState = "visible" | "offscreen" | "covered" | "hidden" | "disabled";
 export interface ControlMatch {
   ref?: string;
@@ -400,9 +586,11 @@ export function nameOf(el: Element): string {
 
 function roleOf(el: Element): ControlRole {
   const r = el.getAttribute("role") ?? "";
+  const t0 = el.tagName.toLowerCase();
   if (r === "button") return "button";
   if (r === "link") return "link";
-  if (/^menuitem/.test(r) || r === "option") return "menuitem";
+  if (/^menuitem/.test(r)) return "menuitem";
+  if (r === "option" || t0 === "option") return "option";
   if (r === "tab") return "tab";
   if (/^(checkbox|switch|radio)$/.test(r)) return "checkbox";
   if (/^(textbox|searchbox|combobox)$/.test(r)) return "field";
@@ -457,11 +645,25 @@ function score(name: string, want: string): number {
   return words.length > 1 && words.every((w) => n.includes(w)) ? 1 : 0;
 }
 
-/** Whether a visible control would get a click at its centre, and if not, what's on top. */
-function coverOf(el: Element, ref: string): { ref: string; text: string } | null {
-  const r = el.getBoundingClientRect();
-  const c = checkPoint({ ref, x: r.left + r.width / 2, y: r.top + r.height / 2 });
-  return c.ok ? null : c.covering ? { ref: c.covering.ref, text: c.covering.text } : null;
+/** The topmost open dialog (role=dialog, <dialog open>, aria-modal), for find and scroll "within: dialog". */
+function openDialog(): Element | null {
+  const all = [...document.querySelectorAll("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]")].filter((d) => shown(d));
+  return all.at(-1) ?? null;
+}
+
+/** An area named by ref, or the word "dialog" for the open dialog. */
+function areaOf(within: string): Element | null {
+  return within === "dialog" ? openDialog() : elementByRef(within);
+}
+
+/** What a word of the query could be found in, cheaply (no layout): text content and the naming attributes. */
+function haystack(el: Element): string {
+  let s = (el.textContent ?? "") + " " + (el.getAttribute("aria-label") ?? "") + " " + (el.getAttribute("title") ?? "") + " " + ((el as HTMLInputElement).placeholder ?? "") + " " + ((el as HTMLInputElement).value ?? "");
+  const img = el.querySelector("img[alt], [aria-label], svg title");
+  if (img) s += " " + (img.getAttribute("alt") ?? img.getAttribute("aria-label") ?? img.textContent ?? "");
+  const by = el.getAttribute("aria-labelledby");
+  if (by) for (const id of by.split(/\s+/)) s += " " + (document.getElementById(id)?.textContent ?? "");
+  return s.toLowerCase();
 }
 
 /**
@@ -469,39 +671,74 @@ function coverOf(el: Element, ref: string): { ref: string; text: string } | null
  * them now (visible, offscreen, covered and by what, hidden and what opens them, disabled). Reads only; refs
  * live in the isolated world (S02). Page text in names is untrusted.
  */
-export function findControls(p: { query: string; role?: ControlRole | "any"; limit?: number; textFallback?: boolean }): ControlMatch[] {
+/** Other names agents use for a kind of control (ARIA roles, HTML words), so a role filter never refuses. */
+const ROLE_ALIASES: Record<string, ControlRole> = {
+  textbox: "field",
+  searchbox: "field",
+  combobox: "field",
+  input: "field",
+  textarea: "field",
+  select: "field",
+  radio: "checkbox",
+  switch: "checkbox",
+  menuitemradio: "menuitem",
+  menuitemcheckbox: "menuitem",
+  listbox: "option",
+};
+function roleMatches(el: Element, role: ControlRole, wanted: string | undefined): boolean {
+  const w = (wanted ?? "any").toLowerCase();
+  if (w === "any" || w === role) return true;
+  if ((el.getAttribute("role") ?? "").toLowerCase() === w) return true;
+  return ROLE_ALIASES[w] === role;
+}
+
+export function findControls(p: { query?: string; role?: string; limit?: number; textFallback?: boolean; within?: string }): ControlMatch[] {
   tagRefs();
   const want = squash(p.query).toLowerCase();
-  if (!want) return [];
-  const limit = Math.min(Math.max(p.limit ?? 8, 1), 20);
+  const area = p.within ? areaOf(p.within) : document;
+  if (!area) throw new Error(p.within === "dialog" ? "No dialog is open." : `No element with ref ${p.within} on the page any more. Call find or read again.`);
+  // No query: every control in the area, in page order (what's in this dialog?).
+  const listing = !want;
+  if (listing && !p.within) return [];
+  const limit = Math.min(Math.max(p.limit ?? (listing ? 30 : 8), 1), 50);
+  const words = want.split(" ").filter(Boolean);
   const scored: Array<{ el: Element; s: number; role: ControlRole; name: string; visible: boolean }> = [];
   const seen = new Set<Element>();
   let scanned = 0;
-  for (const el of document.querySelectorAll(CONTROLS)) {
+  for (const el of area.querySelectorAll(CONTROLS)) {
     if (++scanned > MAX_SCAN * 2) break;
     if (el.closest("[role=tooltip], [aria-hidden=true]")) continue;
-    const name = nameOf(el);
-    const s = score(name, want);
-    if (!s) continue;
+    // Cheap test first: a control none of whose text or labels holds the words can't match. Naming every
+    // control (innerText needs layout) made find take 14 s on Gmail (live, 13 Nov 2026).
+    if (!listing && !words.every((w) => haystack(el).includes(w))) continue;
     const role = roleOf(el);
-    if (p.role && p.role !== "any" && role !== p.role) continue;
+    if (!roleMatches(el, role, p.role)) continue;
+    const name = nameOf(el);
+    const s = listing ? (name ? 1 : 0) : score(name, want);
+    if (!s) continue;
     // The innermost of nested matches (a link wrapping a button with the same name) is enough once.
     if ([...seen].some((x) => x.contains(el) && nameOf(x) === name)) continue;
     seen.add(el);
     scored.push({ el, s: s + 1, role, name, visible: shown(el) });
   }
   for (const el of refElements().filter((e) => clickables.has(e))) {
-    if (seen.has(el)) continue;
+    if (seen.has(el) || (p.within && !(area as Element).contains(el))) continue;
+    if (!listing && !words.every((w) => haystack(el).includes(w))) continue;
     const name = nameOf(el);
-    const s = score(name, want);
-    if (s && (!p.role || p.role === "any" || p.role === "other")) scored.push({ el, s: s + 0.5, role: "other", name, visible: shown(el) });
+    const s = listing ? (name ? 1 : 0) : score(name, want);
+    if (s && roleMatches(el, "other", p.role)) scored.push({ el, s: s + 0.5, role: "other", name, visible: shown(el) });
+  }
+  if (listing) {
+    const visible = scored.filter((x) => x.visible).sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+    return visible.slice(0, limit).map((x) => matchOf(x)).map(({ rank: _rank, ...m }) => m);
   }
   // Last resort for clicking by text: the innermost visible element carrying the text.
   if (p.textFallback && !scored.some((x) => x.visible)) {
     let n = 0;
-    for (const el of document.querySelectorAll("body *")) {
+    for (const el of area.querySelectorAll(area === document ? "body *" : "*")) {
       if (++n > MAX_SCAN * 2) break;
-      if (!(el instanceof HTMLElement) || !shown(el) || el.closest("[role=tooltip], [aria-hidden=true]")) continue;
+      if (!(el instanceof HTMLElement) || !words.every((w) => (el.textContent ?? "").toLowerCase().includes(w))) continue;
+      if (!shown(el) || el.closest("[role=tooltip], [aria-hidden=true]")) continue;
       const own = squash(el.innerText).toLowerCase();
       if (!own || own.length > want.length * 4 + 40) continue;
       if ([...el.children].some((c) => squash((c as HTMLElement).innerText).toLowerCase().includes(want))) continue;
@@ -509,33 +746,30 @@ export function findControls(p: { query: string; role?: ControlRole | "any"; lim
       if (s) scored.push({ el: refAncestor(el) ?? el, s, role: "other", name: squash(el.innerText).slice(0, 200), visible: true });
     }
   }
-  const out: Array<ControlMatch & { rank: number }> = [];
-  for (const x of scored) {
-    const disabled = (x.el as HTMLButtonElement).disabled === true || x.el.getAttribute("aria-disabled") === "true";
-    const base = { role: x.role, name: x.name, region: regionOf(x.el) };
-    if (!x.visible) {
-      const o = opener(x.el);
-      out.push({ ...base, state: "hidden", ...(o ? { openWith: { ref: refFor(o), name: nameOf(o) } } : {}), rank: x.s - 3 });
-      continue;
-    }
-    const ref = refFor(x.el, !hasRef(x.el) && x.role === "other");
-    if (disabled) {
-      out.push({ ...base, ref, state: "disabled", rank: x.s - 4 });
-      continue;
-    }
-    const r = x.el.getBoundingClientRect();
-    const inView = r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
-    if (!inView) {
-      out.push({ ...base, ref, state: "offscreen", rank: x.s - 0.5 });
-      continue;
-    }
-    const cover = coverOf(x.el, ref);
-    out.push(cover ? { ...base, ref, state: "covered", coveredBy: cover, rank: x.s - 2 } : { ...base, ref, state: "visible", rank: x.s });
-  }
-  return out
+  return scored
+    .map((x) => matchOf(x))
     .sort((a, b) => b.rank - a.rank)
     .slice(0, limit)
     .map(({ rank: _rank, ...m }) => m);
+}
+
+/** One found control: what it is, where, and whether a click can reach it now. */
+function matchOf(x: { el: Element; s: number; role: ControlRole; name: string; visible: boolean }): ControlMatch & { rank: number } {
+  const disabled = (x.el as HTMLButtonElement).disabled === true || x.el.getAttribute("aria-disabled") === "true";
+  const base = { role: x.role, name: x.name, region: regionOf(x.el) };
+  if (!x.visible) {
+    const o = opener(x.el);
+    return { ...base, state: "hidden", ...(o ? { openWith: { ref: refFor(o), name: nameOf(o) } } : {}), rank: x.s - 3 };
+  }
+  const ref = refFor(x.el, !hasRef(x.el) && x.role === "other");
+  if (disabled) return { ...base, ref, state: "disabled", rank: x.s - 4 };
+  // Out of the window, or scrolled out of its own list (a dialog's grid): click scrolls to it.
+  if (!sightOf(x.el).inView) return { ...base, ref, state: "offscreen", rank: x.s - 0.5 };
+  const r = x.el.getBoundingClientRect();
+  const c = checkPoint({ ref, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  if (c.ok) return { ...base, ref, state: "visible", rank: x.s };
+  if (!c.covering) return { ...base, ref, state: "offscreen", rank: x.s - 0.5 };
+  return { ...base, ref, state: "covered", coveredBy: { ref: c.covering.ref, text: c.covering.text }, rank: x.s - 2 };
 }
 
 /** Element under a point, for the check before click (Access Model L4). */
@@ -574,11 +808,13 @@ function composedContains(outer: Element, inner: Element): boolean {
  * point is the element or inside it (through shadow DOM and slots), its label, or a component that wraps it.
  * Otherwise it names what's on top and gives it a ref, so the agent can deal with it (close a banner).
  */
-export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null } {
+export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true } | { ok: false; covering: { ref: string; tag: string; text: string } | null; clipped?: true } {
   const target = elementByRef(p.ref);
   const hit = deepElementFromPoint(p.x, p.y);
   if (!target || !hit) return { ok: false, covering: null };
   if (composedContains(target, hit)) return { ok: true };
+  // What's there is the element's own container: it's scrolled out of its list, not covered by anything.
+  if (composedContains(hit, target)) return { ok: false, covering: null, clipped: true };
   // Clicking a label activates its control (custom radios and checkboxes draw the label on top).
   const label = hit.closest("label") as HTMLLabelElement | null;
   if (label && (label.control === target || composedContains(label, target))) return { ok: true };
@@ -599,7 +835,10 @@ export function checkPoint(p: { ref: string; x: number; y: number }): { ok: true
 
 /** A visible link on this page to `href` that opens in this tab, given a ref; null if there is none. */
 export function refForHref(p: { href: string }): string | null {
-  const norm = (h: string) => h.replace(/#.*$/, "").replace(/\/$/, "");
+  // A target with a #fragment (a single-page app's route, Gmail's #settings/themes) needs a link to that
+  // route: any link to the same page would do otherwise, and Gmail's Inbox link won (live, 13 Nov 2026).
+  const keepHash = /#./.test(p.href);
+  const norm = (h: string) => (keepHash ? h : h.replace(/#.*$/, "")).replace(/\/(?=#|$)/, "");
   const want = norm(p.href);
   for (const a of document.querySelectorAll("a[href]")) {
     const el = a as HTMLAnchorElement;

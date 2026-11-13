@@ -203,17 +203,17 @@ describe("end to end with a real browser", { skip: skipReason }, () => {
     assert.match(((await c.call("read")).data as { content: string }).content, /referrer: none/);
   });
 
-  test("the narrow window: 500 px wide by default, full width for a site set to desktop (ADR 0028)", async () => {
+  test("full width by default (ADR 0032); 500 px wide for a site set to narrow (ADR 0028)", async () => {
     const c = await t.mcpClient(t.token("alice", "read"));
     const inner = async () => {
       const content = ((await c.call("read")).data as { content: string }).content;
       return (JSON.parse(content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1)) as { screen: { inner: string } }).screen.inner;
     };
     await c.call("open", { url: site.url("a.test", "/pages/diag") });
-    assert.match(await inner(), /^500x/);
-    t.services.sites.set("alice", { pattern: "b.test", device: "desktop" }, "user");
-    await c.call("open", { url: site.url("b.test", "/pages/diag") });
     assert.match(await inner(), /^1280x/);
+    t.services.sites.set("alice", { pattern: "b.test", device: "narrow" }, "user");
+    await c.call("open", { url: site.url("b.test", "/pages/diag") });
+    assert.match(await inner(), /^500x/);
   });
 
   test("find and click by name: icon buttons, hidden menu items, covered controls (live: Gmail, 12 Nov 2026)", async () => {

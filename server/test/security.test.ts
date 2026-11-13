@@ -477,18 +477,18 @@ describe("challenges (ADR 0001)", () => {
     await t.close();
   });
 
-  test("sites open in the narrow window by default; a person can pick full desktop or an emulated phone (ADR 0028)", async () => {
+  test("sites open full width by default (ADR 0032); a person can pick the narrow window or an emulated phone", async () => {
     const t = await startTestApp();
     const pool = t.pool as FakePool;
     pool.pages.set("https://a.example/", { content: "a" });
     pool.pages.set("https://b.example/", { content: "b" });
     const c = await t.mcpClient(t.token("alice", "read"));
     await c.call("open", { url: "https://a.example/" });
-    assert.equal([...pool.tabs].reverse()[0]!.device, "narrow");
-    t.services.sites.set("alice", { pattern: "b.example", device: "desktop" }, "user");
-    await c.call("open", { url: "https://b.example/" });
     assert.equal([...pool.tabs].reverse()[0]!.device, "desktop");
-    assert.equal(t.services.sites.resolve("alice", "c.example").device, "narrow");
+    t.services.sites.set("alice", { pattern: "b.example", device: "narrow" }, "user");
+    await c.call("open", { url: "https://b.example/" });
+    assert.equal([...pool.tabs].reverse()[0]!.device, "narrow");
+    assert.equal(t.services.sites.resolve("alice", "c.example").device, "desktop");
     await t.close();
   });
 

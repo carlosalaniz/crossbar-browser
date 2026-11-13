@@ -48,7 +48,7 @@ const launcher = env.CROSSBAR_BROWSER_URL
       proxyServer: env.CROSSBAR_PROXY,
       // Headful unless asked: headless announces itself to sites (audit S14).
       headless: env.CROSSBAR_HEADLESS === "1",
-      // A 16:10 desktop window, so the narrow phone-shaped window (ADR 0028) fits inside it.
+      // A 16:10 desktop screen: common, and the narrow window (an option, ADR 0028) still fits inside it.
       windowSize: env.CROSSBAR_WINDOW_SIZE ?? "1920,1200",
       hostResolverRules: env.CROSSBAR_HOST_RESOLVER_RULES,
       extraArgs: env.CROSSBAR_CHROME_ARGS ? env.CROSSBAR_CHROME_ARGS.split(" ") : [],

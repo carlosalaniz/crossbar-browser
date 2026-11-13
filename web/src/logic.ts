@@ -248,3 +248,24 @@ export function dragPanThenScroll(pan: { x: number; y: number }, d: { x: number;
   const next = clampPan({ x: pan.x + d.x, y: pan.y + d.y }, z, img, view);
   return { pan: next, scroll: { x: d.x - (next.x - pan.x), y: d.y - (next.y - pan.y) } };
 }
+
+/**
+ * Two fingers on the magnified phone view (ADR 0032): spreading or closing them zooms the view; moving them
+ * together scrolls the page. Decided once per gesture, when they've moved past `slop` px, so a pinch whose
+ * middle drifts doesn't also scroll.
+ */
+export function twoFingerIntent(start: { dist: number; mx: number; my: number }, now: { dist: number; mx: number; my: number }, slop = 12): "pinch" | "scroll" | null {
+  const spread = Math.abs(now.dist - start.dist);
+  const moved = Math.hypot(now.mx - start.mx, now.my - start.my);
+  if (Math.max(spread, moved) < slop) return null;
+  return spread > moved ? "pinch" : "scroll";
+}
+
+/** Page px shown per view px when the magnifier opens on a desktop-width page: about 0.6, as a phone shows text. */
+export const MAGNIFIED_SCALE = 0.6;
+
+/** The magnifier's starting zoom on top of fit-to-width (`base` = view px per page px); none for a phone-width page. */
+export function magnifierZoom(base: number, pageW: number, max = 5): number {
+  if (pageW <= 700 || base <= 0) return 1;
+  return Math.min(max, Math.max(1, MAGNIFIED_SCALE / base));
+}

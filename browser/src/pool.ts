@@ -814,7 +814,7 @@ class CdpTab implements Tab {
     const { cssLayoutViewport } = await this.cdp.send("Page.getLayoutMetrics", undefined, this.session);
     const first = await this.screenshot().catch(() => null);
     if (first) onFrame(first, { width: cssLayoutViewport.clientWidth, height: cssLayoutViewport.clientHeight });
-    await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.maxWidth ?? 1280, maxHeight: opts.maxHeight ?? 1280, everyNthFrame: 1 }, this.session);
+    await this.cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: opts.maxWidth ?? 2048, maxHeight: opts.maxHeight ?? 2048, everyNthFrame: 1 }, this.session);
   }
 
   async stopScreencast(): Promise<void> {

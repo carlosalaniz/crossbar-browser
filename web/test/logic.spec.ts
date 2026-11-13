@@ -109,7 +109,7 @@ describe("take-control typing", () => {
   });
 });
 
-import { clampPan, panToField, dragPanThenScroll } from "../src/logic.ts";
+import { clampPan, panToField, dragPanThenScroll, twoFingerIntent, magnifierZoom } from "../src/logic.ts";
 
 describe("phone view behaves like a screen", () => {
   const img = { w: 390, h: 845 }; // a 500x1083 page drawn 390 wide
@@ -134,5 +134,20 @@ describe("phone view behaves like a screen", () => {
     expect(r.pan.y).toBe(-145); // the bottom edge reached
     expect(r.scroll.y).toBe(-55); // the rest scrolls the page
     expect(dragPanThenScroll({ x: 0, y: 0 }, { x: 0, y: 30 }, 1, img, view)).toEqual({ pan: { x: 0, y: 0 }, scroll: { x: 0, y: 30 } });
+  });
+});
+
+describe("the phone magnifier (ADR 0032)", () => {
+  test("two fingers: spreading zooms, moving together scrolls, decided once they've moved", () => {
+    const start = { dist: 200, mx: 200, my: 400 };
+    expect(twoFingerIntent(start, { dist: 205, mx: 203, my: 404 })).toBeNull();
+    expect(twoFingerIntent(start, { dist: 260, mx: 206, my: 405 })).toBe("pinch");
+    expect(twoFingerIntent(start, { dist: 196, mx: 200, my: 340 })).toBe("scroll");
+  });
+  test("a desktop page opens magnified to a readable size; a phone-width page doesn't", () => {
+    const base = 390 / 1920;
+    expect(magnifierZoom(base, 1920) * base).toBeCloseTo(0.6);
+    expect(magnifierZoom(390 / 500, 500)).toBe(1);
+    expect(magnifierZoom(390 / 8000, 8000)).toBe(5);
   });
 });

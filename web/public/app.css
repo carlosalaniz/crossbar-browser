@@ -186,7 +186,7 @@ form.stack { display: flex; flex-direction: column; gap: 8px; }
 .tk-phone { height: 100%; bottom: 0; }
 .tk-phone .tk-view { display: block; margin: 0; border-radius: 0; background: #fff; }
 .tk-phone .tk-stage { position: absolute; left: 0; top: 0; transition: transform 0.16s ease-out; }
-.tk-phone .tk-hint { bottom: auto; top: 12px; }
+.tk-phone .tk-hint { bottom: auto; top: 56px; white-space: normal; width: max-content; max-width: calc(100% - 24px); text-align: center; border-radius: 14px; line-height: 1.5; }
 .tk-phone .tk-badge { bottom: auto; top: 8px; }
 .tk-dock { display: flex; flex-direction: column; gap: 0; }
 .tk-phone .tk-dock { position: absolute; left: 0; right: 0; bottom: 0; padding-top: 8px; background: rgba(11, 12, 15, 0.94); backdrop-filter: blur(6px); }

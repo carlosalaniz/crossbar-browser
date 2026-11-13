@@ -550,8 +550,8 @@ async function sitesScreen() {
                 "select",
                 { class: "input small", onchange: (e: Event) => save({ pattern: s.pattern, device: (e.target as HTMLSelectElement).value }) },
                 [
-                  ["narrow", "Narrow (phone-shaped)"],
                   ["desktop", "Full desktop"],
+                  ["narrow", "Narrow (phone-shaped)"],
                   ["mobile", "Emulated phone"],
                 ].map(([v, label]) => h("option", { value: v, selected: s.device === v }, label!)),
               ),

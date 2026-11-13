@@ -13,13 +13,13 @@ export const LEVEL_RANK: Record<SiteLevel, number> = { blocked: 0, read: 1, read
 
 export const Device = z
   .enum(["narrow", "desktop", "mobile"])
-  .describe("How the site sees the browser (ADR 0028). narrow (default): the desktop browser in a window as narrow as Chrome allows, shaped like a phone screen, so responsive sites use their phone layout. desktop: a full-size window. mobile: an emulated phone (ADR 0006).");
+  .describe("How the site sees the browser (ADR 0032). desktop (default): a full-size window. narrow: the desktop browser in a window as narrow as Chrome allows, shaped like a phone screen, so responsive sites use their phone layout. mobile: an emulated phone (ADR 0006).");
 
 export const SiteRule = z.object({
   pattern: z.string().describe("Registrable domain (reddit.com) or a specific host (mail.google.com). The most specific rule wins."),
   level: SiteLevel,
   adblock: z.boolean().describe("Ad and tracker blocking (ADR 0003). On by default.").default(true),
-  device: Device.default("narrow"),
+  device: Device.default("desktop"),
   source: z.enum(["default", "user", "approval", "ticket"]).describe("Where this rule came from."),
 });
 export type SiteRule = z.infer<typeof SiteRule>;

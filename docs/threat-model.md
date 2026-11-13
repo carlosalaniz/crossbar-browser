@@ -57,7 +57,7 @@ Approving tickets and proposals; showing or regenerating tokens; unblocking LAN 
 | Reading | Never asks | Click, expand, load more, paginate, GET search, scroll, consent "reject all", any public site in the anonymous profile |
 | Consequential | Asks unless granted | Non-GET not on the site's read list; using your login on a `read` site; after taint, data to a domain the session hasn't used |
 | Irreversible or private | Always asks | Pay/checkout, delete, change email or password, OAuth authorize, private messages, sensitive paths on signed-in sites |
-| A page's own background requests | Pass (ADR 0027) | What a page sends with no agent action in the last 3 s: analytics, sensors, autosave, push checks. Still held if it carries text read while signed in or text the agent typed, or is irreversible/private (row above) |
+| A page's own background requests | Pass (ADRs 0027, 0031) | What a page sends with no agent action in the last 3 s: analytics, sensors, autosave, push checks. Still held if it carries text the agent typed, or text read while signed in to another site than the one it was read on. Irreversible/private classes (row above) pass until the agent acts on the page, then ask |
 | Not possible | Never | eval, raw CDP, cookie or storage tools; downloads; `file:`, `chrome:`, `devtools:` URLs |
 
 ## Approvals

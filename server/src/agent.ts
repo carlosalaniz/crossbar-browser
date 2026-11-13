@@ -77,7 +77,7 @@ export function isSensitive(url: string): boolean {
 }
 
 /** Rules for requests a page sends on its own account, not as the agent's action. */
-const PAGE_OWN_RULES = new Set(["page_background", "after_open_click", "telemetry", "cors_preflight", "read_list", "captcha_widget", "human_takeover", "local_scheme"]);
+const PAGE_OWN_RULES = new Set(["page_background", "page_before_agent_acted", "after_open_click", "telemetry", "cors_preflight", "read_list", "captcha_widget", "human_takeover", "local_scheme"]);
 
 const pathOf = (url: string): string => {
   try {
@@ -168,6 +168,8 @@ export class AgentSession {
   private readonly lastAction = new Map<string, { tool: "click" | "type"; ref: string; label: string; at: number; intent: "open" | "act" }>();
   private readonly pending = new Map<string, PendingHold>();
   private readonly newHolds: string[] = [];
+  /** Tabs whose current page the agent has acted on (an act click or typing); a new document clears it (ADR 0031). */
+  private readonly actedOnPage = new Set<string>();
   /** Writes the gate let through as the agent's (by a grant or the site's level), so click can say what it sent. */
   private readonly sentWrites: Array<{ tabId: string; at: number; what: string }> = [];
   private pageDomain = new Map<Profile, string>();
@@ -355,6 +357,8 @@ export class AgentSession {
       }
       this.used.add(domain);
       this.pageDomain.set(tab.profile, host);
+      // A new page: nothing the agent did on the last one is behind what this one sends (ADR 0031).
+      this.actedOnPage.delete(tab.id);
       return { verdict: "allow", rule: "navigation" };
     }
 
@@ -376,12 +380,22 @@ export class AgentSession {
     // A click that only opens something (a menu, a tab, a dialog, a link) isn't the agent acting as the
     // person: what the page sends right after it is judged like the page's own requests (ADR 0030; live: the
     // Gmail settings gear needed an approval because Gmail's sync fired within 3 s of the click).
+    // ADR 0031: until the agent acts on this page (an act click or typing), nothing it did can be behind what
+    // the page sends, so even the always-ask classes pass (live: Gmail's taskassist:compose, a settings fetch,
+    // was held as a "message" on every load). After it acts, those classes still ask: a send can leave long
+    // after its click (Gmail's Undo Send waits 5-30 s). Text read while signed in only counts when it leaves
+    // the site it was read on (live: Gmail's own error reports to google.com were held 13 times in one run).
     const trigger = this.triggerFor(tab);
     if (trigger.kind === "page" || trigger.intent === "open") {
       const values = extractValues(r.url, r.postData);
-      const carriesSignedIn = this.tainted && values.some((v) => this.readIndex.overlap(v.value) >= 24);
+      const leavesSite = !sameDomainGroup(domain, registrable(pageDomain ?? ""));
+      const carriesSignedIn = this.tainted && leavesSite && values.some((v) => this.readIndex.overlap(v.value) >= 24);
       const carriesTyped = values.some((v) => this.typed.some((t) => t.length >= 3 && v.value.includes(t)));
-      if (!carriesSignedIn && !carriesTyped && !ALWAYS_ASK.has(cls)) return { verdict: "allow", rule: trigger.kind === "page" ? "page_background" : "after_open_click" };
+      const asks = ALWAYS_ASK.has(cls) && (this.actedOnPage.has(tab.id) || trigger.kind === "agent");
+      if (!carriesSignedIn && !carriesTyped && !asks) {
+        const rule = trigger.kind === "page" ? (ALWAYS_ASK.has(cls) ? "page_before_agent_acted" : "page_background") : "after_open_click";
+        return { verdict: "allow", rule };
+      }
     }
     // A tab whose page is behind an open captcha/login ticket goes quiet: what's left can't be meaningfully
     // approved, and asking for each one would teach the person to rubber-stamp.
@@ -887,7 +901,11 @@ export class AgentSession {
     try {
       // Recorded right before the press, not after the click returns: a page that sends on mousedown or
       // keydown would otherwise be judged by the previous action, or as its own background request.
-      const mark = (el?: { text: string; intent?: "open" | "act" } | void) => this.lastAction.set(tab.id, { tool: "click", ref, label: (el && el.text) || ref, at: Date.now(), intent: (el && el.intent) || "act" });
+      const mark = (el?: { text: string; intent?: "open" | "act" } | void) => {
+        const intent = (el && el.intent) || "act";
+        this.lastAction.set(tab.id, { tool: "click", ref, label: (el && el.text) || ref, at: Date.now(), intent });
+        if (intent === "act") this.actedOnPage.add(tab.id);
+      };
       mark(await tab.click(ref, mark));
     } catch (e) {
       return { state: "error", message: (e as Error).message };
@@ -904,6 +922,7 @@ export class AgentSession {
     // Before the keys, as with click: a page can send on any keystroke, and Enter submits on keydown.
     const startMark = this.markBefore();
     this.lastAction.set(tab.id, { tool: "type", ref, label: text.slice(0, 80), at: Date.now(), intent: "act" });
+    this.actedOnPage.add(tab.id);
     try {
       await tab.type(ref, text, submit);
     } catch (e) {

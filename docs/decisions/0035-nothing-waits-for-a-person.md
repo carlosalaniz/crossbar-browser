@@ -16,7 +16,7 @@ In the container Chrome runs on a screen nobody watches. Live (13 Nov 2026), Ad-
 - **A crashed page** is reloaded once; the agent is told to read again.
 - **A dead Chrome** is forgotten by the pool, and its tabs are closed, so the next tab launches a new browser. **A tab that goes away** (the page closed itself, a crash, Chrome exited) is dropped from the agent's session, so the next open starts a fresh one.
 - **No Chrome command waits forever:** each times out after 60 s with "the page may be frozen".
-- **Blocked requests can get a stand-in:** a filter with `redirect=` (uBO's `noopjs`, `1x1.gif`...) is answered by the gate with that harmless body (`Fetch.fulfillRequest`) instead of an error. Ad-Shield's domains get stand-ins, so the page believes its loader ran and doesn't break itself (ADR 0034's blanket block of them is replaced).
+- **Blocked requests can get a stand-in:** a filter with `redirect=` (uBO's `noopjs`, `1x1.gif`...) is answered by the gate with that harmless body (`Fetch.fulfillRequest`) instead of an error. Measured on Ad-Shield (solsticeforum.com): blocking its loader blanked the page and opened a dialog; a stand-in made it replace the page with its own error page. So Ad-Shield isn't blocked at all for now; beating it needs scriptlets, as uBO does per site.
 
 ## Consequences
 

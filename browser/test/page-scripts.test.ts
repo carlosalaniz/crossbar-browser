@@ -19,13 +19,10 @@ describe("page bundle", () => {
     assert.doesNotMatch(b.cosmeticCss("https://www.other.com/"), /promo-strip/);
   });
 
-  test("Crossbar's own rules block Ad-Shield's ad recovery from other sites, on every domain it rotates to (live: solsticeforum.com)", () => {
+  test("Ad-Shield isn't blocked by Crossbar's own rules: blocking or stubbing its loader breaks the page (live: solsticeforum.com)", () => {
     const b = AdBlocker.fromLists([EXTRA_FILTERS]);
-    const block = (url: string, page: string, resourceType = "Script") => b.shouldBlock({ url, method: "GET", resourceType, targetType: "page" } as never, page);
-    for (const host of ["stg.html-load.com", "stg.content-loader.com", "2.stg.content-loader.com", "x.css-load.com", "x.img-load.com"]) {
-      assert.equal(block(`https://${host}/script/www.solsticeforum.com.js`, "https://www.solsticeforum.com/threads/x/"), true, host);
-    }
-    assert.equal(block("https://0.stg.content-loader.com/session/a/b", "https://www.solsticeforum.com/", "XHR"), true);
+    const blocked = (url: string) => b.check({ url, method: "GET", resourceType: "Script", targetType: "page" } as never, "https://www.solsticeforum.com/threads/x/").block;
+    for (const host of ["html-load.com", "stg.content-loader.com", "fb.html-load.com"]) assert.equal(blocked(`https://${host}/loader.min.js`), false, host);
   });
 
   test("scroll caps are clamped to the server ceiling", () => {

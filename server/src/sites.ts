@@ -145,17 +145,22 @@ export class Sites {
     }
     const stmt = this.db.prepare("SELECT pattern, level, adblock, device, source FROM sites WHERE user_id = ? AND pattern = ?");
     let category: Category | undefined;
+    let matchedCategory: string | null = null;
     for (const c of candidates) {
       const row = stmt.get(userId, c) as { pattern: string; level: SiteLevel; adblock: number; device: "narrow" | "desktop" | "mobile"; source: SiteRule["source"] } | undefined;
       // A person's own rule for this host or domain wins over the category (most specific first).
       if (row) return { level: row.level, adblock: !!row.adblock, device: row.device, matched: row.pattern, source: row.source, category: category ?? this.categoryOfHost.get(c) };
-      category ??= this.categoryOfHost.get(c);
-      if (category) {
-        // Sensitive category: blocked unless the account has turned it on (then the normal ladder applies).
-        if (!this.enabledCategories(userId).has(category)) return { level: "blocked", adblock: true, device: "narrow", matched: c, source: "category", category };
-        return { level: "read", adblock: true, device: "narrow", matched: c, source: "category", category };
-      }
+      if (category) continue;
+      category = this.categoryOfHost.get(c);
+      if (!category) continue;
+      matchedCategory = c;
+      // Sensitive category turned off: blocked. A rule on a parent domain doesn't unlock it
+      // (google.com "read as you" with mail off leaves mail.google.com blocked).
+      if (!this.enabledCategories(userId).has(category)) return { level: "blocked", adblock: true, device: "narrow", matched: c, source: "category", category };
+      // Turned on: the normal ladder, so keep walking up: the person's rule for a parent domain still
+      // applies (live: google.com "read as you" was skipped for mail.google.com, so Gmail opened anonymous).
     }
+    if (category) return { level: "read", adblock: true, device: "narrow", matched: matchedCategory, source: "category", category };
     return { level: "read", adblock: true, device: "narrow", matched: null, source: "default" };
   }
 
